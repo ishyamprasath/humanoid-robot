@@ -8,6 +8,12 @@ node_modules/
 npm-debug.log
 yarn-error.log
 
+# python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+
 # logs
 *.log
 
@@ -16,3 +22,6 @@ yarn-error.log
 Thumbs.db
 .vscode/
 .idea/
+
+# local vendor bundles
+nexabot/.vendor/
