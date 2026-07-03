@@ -1,0 +1,18 @@
+# secrets
+.env
+.env.local
+.env.*.local
+
+# node
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# logs
+*.log
+
+# editor / OS
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

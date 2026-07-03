@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Robot · Cognitive Core</title>
+  <link rel="stylesheet" href="css/style.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🤖</text></svg>" />
+</head>
+<body>
+
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="4" y="7" width="16" height="12" rx="3"/>
+          <path d="M12 3v4"/>
+          <circle cx="9" cy="13" r="1.2" fill="currentColor" stroke="none"/>
+          <circle cx="15" cy="13" r="1.2" fill="currentColor" stroke="none"/>
+          <path d="M9 17h6"/>
+        </svg>
+      </div>
+      <div class="brand-text">
+        <div class="brand-name">Robot</div>
+        <div class="brand-sub">Cognitive Core · Gemini 3.1 Flash Live · Kore</div>
+      </div>
+    </div>
+    <div class="topbar-actions">
+      <div class="status-pill" id="statusPill" data-state="offline">
+        <span class="dot"></span><span id="statusText">Offline</span>
+      </div>
+      <button id="muteBtn"     class="btn ghost">Mute</button>
+      <button id="camBtn"      class="btn ghost">Camera On</button>
+      <button id="hwBtn"       class="btn ghost">Hardware</button>
+      <button id="fallbackBtn" class="btn ghost">Fallback</button>
+      <button id="powerBtn"    class="btn primary">Power On</button>
+    </div>
+  </header>
+
+  <main class="workspace">
+
+    <!-- LEFT COLUMN: vision + coordinates -->
+    <aside class="col left">
+      <section class="card">
+        <div class="card-head">
+          <div class="card-title">First-Person Vision</div>
+          <div class="card-sub">what the robot sees · 1 fps to model</div>
+        </div>
+        <div class="camera-wrap">
+          <video id="cameraVideo" autoplay playsinline muted></video>
+          <canvas id="cameraOverlay"></canvas>
+        </div>
+        <div class="mic-row">
+          <span class="mic-label">Mic</span>
+          <div class="mic-meter"><div id="micMeterFill"></div></div>
+          <span class="speaking" id="speakingDot" title="Robot speaking">◉</span>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-head">
+          <div class="card-title">Coordinates</div>
+          <div class="card-sub">world &amp; camera frames</div>
+        </div>
+        <div class="coord-block">
+          <div class="coord-row">
+            <span class="coord-label">Robot · world</span>
+            <span class="coord-value mono" id="coordWorld">+0.00 , +0.00 m</span>
+          </div>
+          <div class="coord-row">
+            <span class="coord-label">Heading</span>
+            <span class="coord-value mono" id="coordHeading">90° ↑</span>
+          </div>
+          <div class="coord-divider"></div>
+          <div class="coord-row">
+            <span class="coord-label">Target · camera</span>
+            <span class="coord-value mono" id="coordCam">—</span>
+          </div>
+          <div class="coord-row">
+            <span class="coord-label">Target · world</span>
+            <span class="coord-value mono" id="coordWorldTarget">—</span>
+          </div>
+        </div>
+        <div class="metrics">
+          <div class="metric">
+            <span class="metric-label">Gripper</span>
+            <span class="metric-value ok" id="statGripper">OPEN</span>
+          </div>
+          <div class="metric wide">
+            <span class="metric-label">Current task</span>
+            <span class="metric-value" id="statCurrentTask">idle</span>
+          </div>
+        </div>
+      </section>
+    </aside>
+
+    <!-- CENTER: world map -->
+    <section class="col center">
+      <div class="card hero">
+        <div class="card-head">
+          <div>
+            <div class="card-title">Physical World</div>
+            <div class="card-sub">4 m × 4 m room · origin (0,0) at center · +x east · +y north</div>
+          </div>
+          <div class="legend">
+            <span><span class="legend-dot dot-robot"></span>Robot</span>
+            <span><span class="legend-dot dot-look"></span>Look target</span>
+            <span><span class="legend-dot dot-task"></span>Task target</span>
+          </div>
+        </div>
+        <div class="canvas-wrap">
+          <canvas id="simCanvas" width="620" height="620"></canvas>
+        </div>
+      </div>
+    </section>
+
+    <!-- RIGHT: conversation + tasks + action log -->
+    <aside class="col right">
+      <section class="card">
+        <div class="card-head">
+          <div class="card-title">Conversation</div>
+          <div class="card-sub">live transcript · you &amp; the robot</div>
+        </div>
+        <div class="log clean" id="transcript"></div>
+      </section>
+
+      <section class="card">
+        <div class="card-head">
+          <div class="card-title">Task Queue</div>
+          <div class="card-sub">real objectives · not gestures</div>
+        </div>
+        <div class="task-list" id="taskList">
+          <div class="empty">No tasks yet. Ask the robot to do something.</div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-head">
+          <div class="card-title">Action Log</div>
+          <div class="card-sub">tool calls · hardware</div>
+        </div>
+        <div class="log mono" id="actionLog"></div>
+      </section>
+
+      <section class="card hidden" id="fallbackPanel">
+        <div class="card-head">
+          <div class="card-title">Backup Brain</div>
+          <div class="card-sub">NVIDIA Nemotron · text-only</div>
+        </div>
+        <div class="log clean" id="fallbackLog"></div>
+        <div class="chat-row">
+          <input id="fallbackInput" type="text" placeholder="Talk to the backup brain…" />
+          <button id="fallbackSend" class="btn primary compact">Send</button>
+        </div>
+        <!-- backup: Robot speaks via NVIDIA Nemotron text -->
+      </section>
+    </aside>
+
+  </main>
+
+  <!-- runtime-injected env (Gemini key from server .env) -->
+  <script src="js/env.js"></script>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
