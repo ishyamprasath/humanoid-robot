@@ -396,10 +396,22 @@ button { border: 0; background: none; cursor: pointer; }
   border-radius: inherit;
   box-shadow: inset 0 0 60px rgba(0, 0, 0, 0.35);
 }
-.camera-wrap video {
+.camera-wrap video,
+.camera-wrap img {
   width: 100%; height: 100%;
   object-fit: cover;
   display: block;
+}
+.camera-idle {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: rgba(255, 255, 255, 0.45);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  pointer-events: none;
 }
 .camera-wrap canvas {
   position: absolute; inset: 0;

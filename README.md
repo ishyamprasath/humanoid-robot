@@ -1,88 +1,125 @@
-# 🤖 NexaBot — Cognitive Core
+# 🤖 Robot — Cognitive Core
 
-Premium light-themed web cockpit for a 3-foot humanoid robot brain.
+**Python brain · thin web display · ROS 2 Jazzy-ready.**
 
-Real-time voice conversation via the **Gemini 3.1 Flash Live API** (voice **Kore**).
-Your microphone streams up as 16 kHz PCM, the model streams warm human-sounding
-audio back at 24 kHz, and every tool call it makes is executed against a live
-world-frame simulator (and mirrored to real hardware over USB if plugged in).
+Real-time voice conversation on the **Gemini 3.1 Flash Live API** (voice
+**Kore**). The Python backend owns everything cognitive — the Live session,
+system microphone and speaker, camera, tool execution, and task state. The
+browser UI is a thin display client for the robot's 8" screen: it renders
+whatever state the backend broadcasts over WebSocket, and nothing more.
+
+```
+┌────────────────── Python cognitive core (backend/) ──────────────────┐
+│  🎙 mic ─┐                                     ┌─▶ 🔊 speaker         │
+│  📷 cam ─┤        Gemini Live (WebSocket)      │                      │
+│          ├──────▶ gemini-3.1-flash-live ───────┤                      │
+│          │        voice Kore · tools           │                      │
+│          │             │ tool calls            │                      │
+│          │             ▼                       │                      │
+│          │      Robot executor  ──────▶ ESP32 (USB serial, optional) │
+│          │      (world-frame sim,                                     │
+│          │       task queue — swap for ROS 2 Jazzy adapter later)     │
+│          │             │                                              │
+│          └──── state broadcast (ws://:8765) ◀──┘                      │
+└──────────────────────────│───────────────────────────────────────────┘
+                           ▼
+              frontend/ display client (8" screen)
+              http://:8000 — renders transcript, world map,
+              tasks, coordinates, camera view. Zero intelligence.
+```
 
 ---
 
-## ⚡ Quick start
+## ⚡ Quick start (laptop)
 
 ```powershell
 cd nexabot
-node server.js
+copy .env.example .env        # then edit .env — add your API keys
+
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+
+cd backend
+python main.py                # or: python main.py --auto
 ```
 
-Open **http://localhost:8000** in Chrome or Edge, press **Power On**, allow mic
-and camera, and just talk:
+Open **http://localhost:8000** (any browser — the display client), press
+**Power On**, and talk. The Python process owns your mic and speakers.
 
-- *"What can you see right now?"* – describes the frame
-- *"Look at the blue cup on my desk"* – 👀 look-at reticle on the camera + world-frame projection
-- *"Navigate to +1.5, -0.8"* – 🧭 base drives to an absolute world point
-- *"Grab the mug"* – 🤏 gripper closes (refuses if depth > 1.5 m — reach limit)
-- *"Fetch the water bottle from the kitchen counter"* – 📋 opens a proper **task** with an objective, target and priority
-- Interrupt any time — barge-in stops playback instantly.
+- *"What can you see right now?"* — describes the camera frame
+- *"Look at the blue cup"* — look-at reticle + camera→world projection
+- *"Navigate to +1.5, -0.8"* — absolute world-frame move
+- *"Fetch the water bottle from the kitchen"* — opens a real **task** with a goal, target, and priority
+- Type in the input box instead of talking whenever you want (works even when the Live brain is off — falls back to NVIDIA Nemotron text).
+- Interrupt mid-sentence — barge-in stops the speaker instantly.
 
-Requires Node 18+ (built-in `fetch`) and a Chromium browser (AudioWorklet + Web Serial).
-
----
-
-## What's new in this build
-
-- **Premium light theme** — ivory paper background, refined indigo accent, elegant micro-typography, subtle shadows. No dark mode.
-- **Real world-frame coordinates** — the 4 m × 4 m room now has origin (0, 0) at its center, +x = east, +y = north. The HUD shows the robot's **world position in meters**, its **heading in degrees**, and for any tracked target both the **camera-frame** coords and the projected **world-frame** coords.
-- **Tasks replace gestures** — the `execute_gesture` tool is gone. The new **`execute_task`** tool commits the robot to a real objective (`fetch`, `deliver`, `inspect`, `follow`, `greet`, `patrol`, `return_home`, `wait`) with a description, world-frame target, and priority. Tasks appear in a live queue with active/completed states.
-- **`navigate_to(world_x, world_y)`** — new absolute-position tool so the brain can plan multi-step movements in true world coordinates.
-- **Coordinate overlay** — the look-at reticle on the camera feed shows the raw camera coords **and** the projected depth so you can see the geometry.
+Requires Python 3.10+. `opencv-python` and `pyserial` are optional.
 
 ---
 
-## 📁 Files
+## 📁 Layout
 
-| File | Purpose |
+| Path | What it is |
 |---|---|
-| [`server.js`](server.js) | Zero-dep Node server: static cockpit + NVIDIA proxy |
-| [`public/index.html`](public/index.html) | Cockpit layout — 3-column workspace |
-| [`public/css/style.css`](public/css/style.css) | Premium light theme |
-| [`public/js/config.js`](public/js/config.js) | API keys, model, voice, audio rates, **system prompt** |
-| [`public/js/tools.js`](public/js/tools.js) | 5 tool declarations: robot_action, move, turn, **navigate_to**, **execute_task** |
-| [`public/js/gemini-live.js`](public/js/gemini-live.js) | Live WebSocket client (mic + video up, audio + tool calls + transcripts down) |
-| [`public/js/audio-input.js`](public/js/audio-input.js) | Mic → 16 kHz PCM16 chunks via AudioWorklet |
-| [`public/js/audio-output.js`](public/js/audio-output.js) | 24 kHz gapless playback + instant barge-in |
-| [`public/js/video-input.js`](public/js/video-input.js) | Webcam preview + 1 fps JPEG frames upstream |
-| [`public/js/robot-sim.js`](public/js/robot-sim.js) | World-frame simulator, task queue, coordinate projection |
-| [`public/js/serial-bridge.js`](public/js/serial-bridge.js) | Web Serial mirror → real robot firmware |
-| [`public/js/fallback-chat.js`](public/js/fallback-chat.js) | NVIDIA Nemotron backup brain |
-| [`public/js/main.js`](public/js/main.js) | Orchestrator: senses ↔ brain ↔ simulator ↔ hardware |
-| [`firmware/`](firmware) | ESP32/Arduino sketch (unchanged — receives the same JSON lines) |
+| [`backend/main.py`](backend/main.py) | Entry point — orchestrates senses, brain, robot, servers |
+| [`backend/config.py`](backend/config.py) | .env loading, model/audio/world settings, **persona** |
+| [`backend/tools.py`](backend/tools.py) | 5 tool declarations (camera-frame + world-frame, task-based) |
+| [`backend/brain_live.py`](backend/brain_live.py) | Gemini Live session (google-genai SDK) |
+| [`backend/brain_fallback.py`](backend/brain_fallback.py) | NVIDIA Nemotron text fallback |
+| [`backend/audio_io.py`](backend/audio_io.py) | sounddevice mic capture + speaker playback + barge-in |
+| [`backend/video_io.py`](backend/video_io.py) | OpenCV camera → JPEG frames (to Gemini + display) |
+| [`backend/robot.py`](backend/robot.py) | **The ROS 2 swap point** — tool executor, world model, task queue |
+| [`backend/state_server.py`](backend/state_server.py) | WebSocket state stream + static file server for the display |
+| [`backend/hardware_bridge.py`](backend/hardware_bridge.py) | Optional ESP32 mirror over USB serial |
+| [`frontend/`](frontend) | Thin display client (HTML/CSS/JS — no AI, no secrets) |
+| [`firmware/`](firmware) | ESP32/Arduino sketch for the serial protocol |
 
-## 🎛️ Configuration
+## 🧠 Why this shape
 
-Edit [`public/js/config.js`](public/js/config.js):
+Everything cognitive is Python because that's where the AI ecosystem lives
+(torch, ultralytics, whisper, mediapipe, …) and because **ROS 2 Jazzy's
+first-class client is `rclpy`**. The migration path is designed in:
 
-- `GEMINI_MODEL` — default `models/gemini-3.1-flash-live-preview`.
-- `VOICE_NAME` — default `Kore`.
-- `ROOM_HALF_METERS` — half-size of the room (default 2.0 → a 4 m × 4 m room).
-- `SYSTEM_PROMPT` — the robot's persona and coordinate-system briefing.
+`backend/robot.py` is the single swap point. Today it simulates a 4 m × 4 m
+world; on the robot, a `Ros2Robot(Robot)` subclass maps the same calls to:
 
-## 🔧 Real hardware (optional)
+| Tool call | ROS 2 Jazzy |
+|---|---|
+| `move_robot` / `turn_robot` | `geometry_msgs/Twist` on `/cmd_vel` |
+| `navigate_to(world_x, world_y)` | `nav2_msgs/action/NavigateToPose` |
+| `look_at` | head pan/tilt `JointTrajectory` |
+| `grasp` / `release` | `control_msgs/action/GripperCommand` |
+| `execute_task` | custom `/robot/task` action (behavior tree / state machine) |
 
-1. Flash [`firmware/nexabot_firmware/nexabot_firmware.ino`](firmware/nexabot_firmware/nexabot_firmware.ino) to an ESP32 (edit its pin map + calibration first).
-2. Plug it in via USB, click **Hardware** in the cockpit, and pick the COM port.
-3. Every tool call now runs on-screen **and** on the real robot. Firmware acks appear in the Action Log.
+Nothing in the Gemini brain, audio, or display changes.
 
-Wire protocol — one JSON object per line at 115 200 baud:
+## 🔐 Secrets
+
+All keys live in `.env` (gitignored). `cp .env.example .env` and fill in:
+- `GEMINI_API_KEY` — https://aistudio.google.com/app/apikey
+- `NVIDIA_API_KEY` — https://build.nvidia.com
+
+The display client receives **no secrets** — it's a pure state renderer.
+
+## 🔧 Hardware bridge (optional)
+
+Set `SERIAL_PORT=COM4` (or `/dev/ttyUSB0`) in `.env`, `pip install pyserial`,
+and flash [`firmware/nexabot_firmware/`](firmware/nexabot_firmware/nexabot_firmware.ino)
+to an ESP32. Every tool call is mirrored as one JSON line at 115 200 baud:
 
 ```json
 {"cmd":"navigate_to","args":{"world_x":1.2,"world_y":-0.5,"speed":0.6}}
-{"cmd":"execute_task","args":{"task_type":"fetch","description":"bring the mug","target_coordinates":{"world_x":1.8,"world_y":0.2},"priority":"high"}}
 ```
 
-## ⚠️ Notes
+## 🖥 Deploying to the robot's 8" display
 
-- Chromium browsers only (AudioWorklet + Web Serial).
-- The API keys are embedded in [`config.js`](public/js/config.js) and [`server.js`](server.js) for local convenience — don't push this folder public without moving them to env vars.
-- If Gemini Live can't connect, the Fallback panel opens automatically — a text chat with the same persona running on NVIDIA Nemotron.
+Run the backend on the robot's computer, then launch the display in kiosk
+mode pointing at itself:
+
+```bash
+chromium --kiosk --app=http://localhost:8000
+```
+
+The display client auto-reconnects to the backend WebSocket if either side
+restarts.

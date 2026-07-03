@@ -22,33 +22,34 @@
       </div>
       <div class="brand-text">
         <div class="brand-name">Robot</div>
-        <div class="brand-sub">Cognitive Core · Gemini 3.1 Flash Live · Kore</div>
+        <div class="brand-sub">Cognitive Core · Python backend · display client</div>
       </div>
     </div>
     <div class="topbar-actions">
       <div class="status-pill" id="statusPill" data-state="offline">
         <span class="dot"></span><span id="statusText">Offline</span>
       </div>
-      <button id="muteBtn"     class="btn ghost">Mute</button>
-      <button id="camBtn"      class="btn ghost">Camera On</button>
-      <button id="hwBtn"       class="btn ghost">Hardware</button>
-      <button id="fallbackBtn" class="btn ghost">Fallback</button>
-      <button id="powerBtn"    class="btn primary">Power On</button>
+      <div class="status-pill" id="linkPill" data-state="error" title="Backend link">
+        <span class="dot"></span><span id="linkText">Backend…</span>
+      </div>
+      <button id="muteBtn"  class="btn ghost">Mute</button>
+      <button id="powerBtn" class="btn primary">Power On</button>
     </div>
   </header>
 
   <main class="workspace">
 
-    <!-- LEFT COLUMN: vision + coordinates -->
+    <!-- LEFT: what the robot sees + coordinates -->
     <aside class="col left">
       <section class="card">
         <div class="card-head">
-          <div class="card-title">First-Person Vision</div>
-          <div class="card-sub">what the robot sees · 1 fps to model</div>
+          <div class="card-title">Robot Vision</div>
+          <div class="card-sub">streamed from the Python core · 1 fps</div>
         </div>
         <div class="camera-wrap">
-          <video id="cameraVideo" autoplay playsinline muted></video>
-          <canvas id="cameraOverlay"></canvas>
+          <img id="cameraFrame" alt="" />
+          <canvas id="cameraOverlay" width="640" height="480"></canvas>
+          <div class="camera-idle" id="cameraIdle">camera offline</div>
         </div>
         <div class="mic-row">
           <span class="mic-label">Mic</span>
@@ -114,7 +115,7 @@
       </div>
     </section>
 
-    <!-- RIGHT: conversation + tasks + action log -->
+    <!-- RIGHT: conversation + tasks + log -->
     <aside class="col right">
       <section class="card">
         <div class="card-head">
@@ -122,6 +123,10 @@
           <div class="card-sub">live transcript · you &amp; the robot</div>
         </div>
         <div class="log clean" id="transcript"></div>
+        <div class="chat-row">
+          <input id="textInput" type="text" placeholder="Type instead of talking…" />
+          <button id="textSend" class="btn primary compact">Send</button>
+        </div>
       </section>
 
       <section class="card">
@@ -137,29 +142,14 @@
       <section class="card">
         <div class="card-head">
           <div class="card-title">Action Log</div>
-          <div class="card-sub">tool calls · hardware</div>
+          <div class="card-sub">tool calls · backend events</div>
         </div>
         <div class="log mono" id="actionLog"></div>
-      </section>
-
-      <section class="card hidden" id="fallbackPanel">
-        <div class="card-head">
-          <div class="card-title">Backup Brain</div>
-          <div class="card-sub">NVIDIA Nemotron · text-only</div>
-        </div>
-        <div class="log clean" id="fallbackLog"></div>
-        <div class="chat-row">
-          <input id="fallbackInput" type="text" placeholder="Talk to the backup brain…" />
-          <button id="fallbackSend" class="btn primary compact">Send</button>
-        </div>
-        <!-- backup: Robot speaks via NVIDIA Nemotron text -->
       </section>
     </aside>
 
   </main>
 
-  <!-- runtime-injected env (Gemini key from server .env) -->
-  <script src="js/env.js"></script>
-  <script type="module" src="js/main.js"></script>
+  <script src="js/display.js"></script>
 </body>
 </html>
