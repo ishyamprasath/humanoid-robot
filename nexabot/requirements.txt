@@ -1,0 +1,3 @@
+# NexaBot terminal task runner
+opencv-python>=4.9,<5
+pyserial>=3.5
