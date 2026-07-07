@@ -10,11 +10,12 @@ with zero-copy and without blocking.
 from __future__ import annotations
 
 import struct
+import sys
 import time
 from multiprocessing import shared_memory
 import numpy as np
 
-from config import VIDEO_WIDTH, VIDEO_HEIGHT, VIDEO_FPS
+from config import VIDEO_WIDTH, VIDEO_HEIGHT, VIDEO_CAPTURE_FPS
 
 # First 8 bytes: unsigned long long sequence counter
 # Next 4 bytes: width
@@ -50,15 +51,28 @@ class FrameBroker:
         except FileExistsError:
             self.shm = shared_memory.SharedMemory(name=self.name)
 
-        cap = self._cv2.VideoCapture(0, self._cv2.CAP_ANY)
+        cv2 = self._cv2
+        # On Windows, DirectShow grabs faster than the default MSMF backend and
+        # actually honors BUFFERSIZE. Fall back to CAP_ANY elsewhere.
+        backend = cv2.CAP_DSHOW if sys.platform == "win32" else cv2.CAP_ANY
+        cap = cv2.VideoCapture(0, backend)
         if not cap.isOpened():
             print("Camera failed to open, FrameBroker exiting.")
             return
 
-        cap.set(self._cv2.CAP_PROP_FRAME_WIDTH, VIDEO_WIDTH)
-        cap.set(self._cv2.CAP_PROP_FRAME_HEIGHT, VIDEO_HEIGHT)
-        
-        interval = 1.0 / max(1, VIDEO_FPS)
+        # MJPG before size/fps: most USB webcams are USB-bandwidth-limited to
+        # ~10-15 fps in uncompressed YUY2 at 640x480, but deliver a full 30 fps
+        # in MJPG. This is the single biggest win against choppy video.
+        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, VIDEO_WIDTH)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, VIDEO_HEIGHT)
+        # Ask the driver for our target rate and — critically — a 1-frame
+        # internal buffer. Without this OpenCV queues frames faster than we
+        # publish them, so consumers read stale frames (the "buffering" lag).
+        cap.set(cv2.CAP_PROP_FPS, VIDEO_CAPTURE_FPS)
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+
+        interval = 1.0 / max(1, VIDEO_CAPTURE_FPS)
         seq = 0
 
         try:

@@ -2,15 +2,16 @@
 Camera feed — the robot's eyes.
 
 Reads raw BGR frames from shared memory (populated by the FrameBroker),
-encodes them to JPEG, and yields them at VIDEO_FPS. Frames go two places:
-up to Gemini as vision input, and out to the display client.
+encodes them to JPEG, and yields them at a caller-chosen rate. Frames go
+two places at different rates: out to the display client (smooth) and up
+to Gemini as vision input (sipped slowly).
 """
 
 from __future__ import annotations
 
 import asyncio
 
-from config import (VIDEO_ENABLED, VIDEO_FPS, VIDEO_JPEG_QUALITY)
+from config import (VIDEO_ENABLED, VIDEO_DISPLAY_FPS, VIDEO_JPEG_QUALITY)
 from shared_camera import FrameReader
 
 
@@ -30,13 +31,18 @@ class CameraFeed:
         self._reader = FrameReader()
         self.enabled = True
 
-    async def frames(self):
-        """Async generator of raw JPEG bytes at VIDEO_FPS."""
+    async def frames(self, fps: float = VIDEO_DISPLAY_FPS):
+        """Async generator of raw JPEG bytes, throttled to `fps`.
+
+        The same shared-memory source feeds several consumers at different
+        rates (smooth display vs. slow Gemini upload), so the rate is a
+        per-consumer argument rather than a global constant.
+        """
         if not self.enabled:
             return
-            
+
         cv2 = self._cv2
-        interval = 1.0 / max(1, VIDEO_FPS)
+        interval = 1.0 / max(0.1, fps)
         loop = asyncio.get_running_loop()
         
         try:

@@ -14,7 +14,8 @@ from google import genai
 from google.genai import types
 
 from config import (GEMINI_API_KEY, GEMINI_API_VERSION, GEMINI_MODEL,
-                    SEND_SAMPLE_RATE, SYSTEM_PROMPT, VOICE_NAME)
+                    SEND_SAMPLE_RATE, SYSTEM_PROMPT, VIDEO_GEMINI_FPS,
+                    VOICE_NAME)
 from tools import build_tools
 
 
@@ -129,10 +130,11 @@ class GeminiLiveBrain:
             )
 
     async def _send_video(self):
-        async for jpeg in self._video.frames():
+        # The display gets its own high-fps feed in the core; here we sip
+        # frames at VIDEO_GEMINI_FPS to keep the Live upload light.
+        async for jpeg in self._video.frames(VIDEO_GEMINI_FPS):
             if self._session is None:
                 return
-            self._on_video_frame(jpeg)
             await self._session.send_realtime_input(
                 video=types.Blob(data=jpeg, mime_type="image/jpeg"),
             )

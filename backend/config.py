@@ -66,8 +66,18 @@ MIC_CHUNK_SIZE   = 1024
 VIDEO_ENABLED      = os.environ.get("VIDEO_ENABLED", "1") != "0"
 VIDEO_WIDTH        = 640
 VIDEO_HEIGHT       = 480
-VIDEO_FPS          = 1
 VIDEO_JPEG_QUALITY = 70
+
+# Three decoupled frame rates (the single 1-fps feed used to buffer badly):
+#   CAPTURE — how fast the broker pulls from the webcam into shared memory.
+#             Keep high so frames stay fresh and OpenCV's internal buffer never
+#             backs up (stale-frame lag). This is cheap: no encoding here.
+#   DISPLAY — smooth on-screen preview to the 8" display client.
+#   GEMINI  — frames sent up to the Live API. Keep LOW on purpose: every frame
+#             costs tokens/bandwidth and the model doesn't need 20 fps.
+VIDEO_CAPTURE_FPS  = int(os.environ.get("VIDEO_CAPTURE_FPS", "30"))
+VIDEO_DISPLAY_FPS  = int(os.environ.get("VIDEO_DISPLAY_FPS", "20"))
+VIDEO_GEMINI_FPS   = float(os.environ.get("VIDEO_GEMINI_FPS", "1"))
 
 # ---------------------------------------------------------------
 # World frame — 4 m x 4 m room, origin at center, +x east, +y north
@@ -89,6 +99,10 @@ TRACK_DEBOUNCE_FRAMES = 8
 TRACK_GRACE_PERIOD_SEC = 3.5
 EMBEDDING_RECOMPUTE_INTERVAL = 7
 MAX_ROSTER_PING_RATE = 2.0
+# Detection input size for the face worker. 640 is accurate but slow on CPU
+# (~0.4 fps); 320 roughly quadruples throughput and is plenty for webcam-range
+# faces. Bump back up if you have a CUDA GPU.
+FACE_DET_SIZE = int(os.environ.get("FACE_DET_SIZE", "320"))
 
 # ---------------------------------------------------------------
 # Persona — the robot's mind

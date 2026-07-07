@@ -11,8 +11,8 @@ import time
 import queue
 from multiprocessing import Queue
 from shared_camera import FrameReader
-from config import (FACE_MATCH_THRESHOLD, TRACK_DEBOUNCE_FRAMES, 
-                    TRACK_GRACE_PERIOD_SEC, MAX_ROSTER_PING_RATE)
+from config import (FACE_MATCH_THRESHOLD, TRACK_DEBOUNCE_FRAMES,
+                    TRACK_GRACE_PERIOD_SEC, MAX_ROSTER_PING_RATE, FACE_DET_SIZE)
 
 class FaceIDWorker:
     def __init__(self, high_freq_q: Queue, low_freq_q: Queue):
@@ -32,7 +32,7 @@ class FaceIDWorker:
         
         # Initialize FaceAnalysis
         app = FaceAnalysis(name='buffalo_l', providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
-        app.prepare(ctx_id=0, det_size=(640, 640))
+        app.prepare(ctx_id=0, det_size=(FACE_DET_SIZE, FACE_DET_SIZE))
         
         # We will use a mock/simplified ledger for now, or full if needed.
         # But for integration, the structure is what matters.

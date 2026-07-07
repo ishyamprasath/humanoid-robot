@@ -23,13 +23,22 @@ import time
 import traceback
 import multiprocessing as mp
 
+# On Windows the console defaults to cp1252, which can't encode the emoji
+# used in the startup banner and logs. Force UTF-8 so prints never crash.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8")
+    except (AttributeError, ValueError):
+        pass
+
 from shared_camera import FrameBroker
 from face_worker import run_worker
 
 from audio_io import MicCapture, SpeakerPlayer
 from brain_fallback import FallbackBrain
 from brain_live import GeminiLiveBrain
-from config import GEMINI_API_KEY, GEMINI_MODEL, HTTP_PORT, VOICE_NAME, WS_PORT
+from config import (GEMINI_API_KEY, GEMINI_MODEL, HTTP_PORT, VIDEO_DISPLAY_FPS,
+                    VOICE_NAME, WS_PORT)
 from hardware_bridge import HardwareBridge
 from robot import Robot
 from state_server import StateServer
@@ -225,6 +234,26 @@ class Core:
             except Exception:
                 await asyncio.sleep(0.1)
 
+    async def _video_display_loop(self):
+        """Stream the camera to the display at VIDEO_DISPLAY_FPS.
+
+        Runs independently of the brain so the preview is smooth and shows
+        up even before Power On. Reconnects on its own — read_latest simply
+        returns None until the FrameBroker's shared memory exists.
+        """
+        feed = CameraFeed()
+        if not feed.enabled:
+            return
+        try:
+            async for jpeg in feed.frames(VIDEO_DISPLAY_FPS):
+                self._on_video_frame(jpeg)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001
+            self.log(f"display video loop error: {e}")
+        finally:
+            feed.stop()
+
     async def _vision_queue_listener(self):
         if not self.high_freq_q: return
         loop = asyncio.get_running_loop()
@@ -242,6 +271,7 @@ class Core:
             asyncio.create_task(self._vision_queue_listener(), name="vision_q")
         if self.low_freq_q:
             asyncio.create_task(self._roster_queue_listener(), name="roster_q")
+        asyncio.create_task(self._video_display_loop(), name="video_display")
 
         await self.server.start()
         self.status("offline", "asleep")
@@ -259,16 +289,20 @@ class Core:
         await asyncio.Event().wait()  # run forever
 
 
+def _run_broker():
+    FrameBroker().run()
+
+
 def main():
     parser = argparse.ArgumentParser(description="Robot cognitive core")
     parser.add_argument("--auto", action="store_true", help="power the brain on at launch")
     args = parser.parse_args()
-    
+
     mp.set_start_method('spawn', force=True)
     high_q = mp.Queue(maxsize=10)
     low_q = mp.Queue(maxsize=50)
-    
-    broker_proc = mp.Process(target=lambda: FrameBroker().run(), daemon=True)
+
+    broker_proc = mp.Process(target=_run_broker, daemon=True)
     worker_proc = mp.Process(target=run_worker, args=(high_q, low_q), daemon=True)
     
     broker_proc.start()
