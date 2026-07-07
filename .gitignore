@@ -21,6 +21,29 @@ __pycache__/
 .DS_Store
 Thumbs.db
 .vscode/
+# secrets
+.env
+.env.local
+.env.*.local
+
+# node
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+
+# logs
+*.log
+
+# editor / OS
+.DS_Store
+Thumbs.db
+.vscode/
 .idea/
 
 # local vendor bundles
@@ -32,3 +55,6 @@ backend/face_identification/FaceID_Gemini_merge.md
 backend/face_identification/face_id_windows_demo_plan.md
 backend/face_identification/robo-README.md
 backend/face_identification/vision_project_summary.md
+
+# Startup scripts
+start_robot.bat

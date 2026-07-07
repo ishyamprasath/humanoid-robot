@@ -7,6 +7,8 @@ class CameraThread:
     def __init__(self, src=0):
         self.src = src
         self.cap = cv2.VideoCapture(self.src, cv2.CAP_DSHOW)
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
         if not self.cap.isOpened():
             log_error(f"Failed to open camera index {self.src}")
             self.running = False

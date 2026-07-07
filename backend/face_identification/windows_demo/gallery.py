@@ -5,21 +5,20 @@ import cv2
 from insightface.app import FaceAnalysis
 from logger import log_event, log_warning, log_error
 
-GALLERY_DIR = "gallery"
-INDEX_FILE = os.path.join(GALLERY_DIR, "index.json")
-
 class Gallery:
-    def __init__(self, face_app: FaceAnalysis):
+    def __init__(self, face_app: FaceAnalysis, model_name: str = "buffalo_l"):
         self.face_app = face_app
+        self.gallery_dir = os.path.join("gallery", model_name)
+        self.index_file = os.path.join(self.gallery_dir, "index.json")
         self.identities = {} # name -> list of embeddings
         self.index = {}
-        os.makedirs(GALLERY_DIR, exist_ok=True)
+        os.makedirs(self.gallery_dir, exist_ok=True)
         self.load()
 
     def load(self):
-        if os.path.exists(INDEX_FILE):
+        if os.path.exists(self.index_file):
             try:
-                with open(INDEX_FILE, 'r') as f:
+                with open(self.index_file, 'r') as f:
                     self.index = json.load(f)
             except Exception as e:
                 log_error(f"Failed to load gallery index: {e}")
@@ -27,7 +26,7 @@ class Gallery:
 
         self.identities = {}
         for name, meta in self.index.items():
-            npz_path = os.path.join(GALLERY_DIR, f"{name}.npz")
+            npz_path = os.path.join(self.gallery_dir, f"{name}.npz")
             if os.path.exists(npz_path):
                 try:
                     data = np.load(npz_path)
@@ -36,7 +35,7 @@ class Gallery:
                     log_error(f"Failed to load embeddings for {name}: {e}")
 
     def save_index(self):
-        with open(INDEX_FILE, 'w') as f:
+        with open(self.index_file, 'w') as f:
             json.dump(self.index, f, indent=4)
 
     def get_identities(self):
@@ -50,8 +49,8 @@ class Gallery:
             return {"status": "error", "message": f"Target name '{new_name}' already exists."}
             
         if new_name != old_name:
-            old_path = os.path.join(GALLERY_DIR, f"{old_name}.npz")
-            new_path = os.path.join(GALLERY_DIR, f"{new_name}.npz")
+            old_path = os.path.join(self.gallery_dir, f"{old_name}.npz")
+            new_path = os.path.join(self.gallery_dir, f"{new_name}.npz")
             if os.path.exists(old_path):
                 try:
                     os.rename(old_path, new_path)
@@ -117,7 +116,7 @@ class Gallery:
         else:
             self.identities[name] = final_embeddings
             
-        np.savez(os.path.join(GALLERY_DIR, f"{name}.npz"), embeddings=self.identities[name])
+        np.savez(os.path.join(self.gallery_dir, f"{name}.npz"), embeddings=self.identities[name])
         
         self.index[name] = {
             "count": len(self.identities[name]),
@@ -195,7 +194,7 @@ class Gallery:
         else:
             self.identities[name] = final_embeddings
             
-        np.savez(os.path.join(GALLERY_DIR, f"{name}.npz"), embeddings=self.identities[name])
+        np.savez(os.path.join(self.gallery_dir, f"{name}.npz"), embeddings=self.identities[name])
         
         self.index[name] = {
             "count": len(self.identities[name])
