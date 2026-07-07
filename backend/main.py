@@ -21,6 +21,10 @@ import base64
 import sys
 import time
 import traceback
+import multiprocessing as mp
+
+from shared_camera import FrameBroker
+from face_worker import run_worker
 
 from audio_io import MicCapture, SpeakerPlayer
 from brain_fallback import FallbackBrain
@@ -33,11 +37,14 @@ from video_io import CameraFeed
 
 
 class Core:
-    def __init__(self):
+    def __init__(self, high_q: mp.Queue | None = None, low_q: mp.Queue | None = None):
         self.server = StateServer(on_command=self.handle_command)
         self.bridge = HardwareBridge(on_log=self.log)
         self.robot = Robot(on_action=self._on_action, on_state=self._on_robot_state)
         self.fallback = FallbackBrain()
+        self.high_freq_q = high_q
+        self.low_freq_q = low_q
+        self.roster_cache = set()
 
         self.brain: GeminiLiveBrain | None = None
         self.brain_task: asyncio.Task | None = None
@@ -149,10 +156,17 @@ class Core:
         self.mic = MicCapture(mic_q, self._loop, on_level=self._on_mic_level)
         self.camera = CameraFeed()
 
+        def _handle_tool_call(name: str, args: dict):
+            if name == "get_visible_people":
+                if not self.roster_cache:
+                    return {"people": []}
+                return {"people": list(self.roster_cache)}
+            return self.robot.execute(name, args)
+
         self.brain = GeminiLiveBrain(
             mic_queue=mic_q,
             on_audio=lambda pcm: self.speaker.enqueue(pcm),
-            on_tool_call=self.robot.execute,
+            on_tool_call=_handle_tool_call,
             on_input_transcript=lambda t: self.server.broadcast(
                 {"type": "transcript", "role": "user", "text": t}),
             on_output_transcript=lambda t: self.server.broadcast(
@@ -193,8 +207,42 @@ class Core:
         self.server.broadcast({"type": "interrupted"})
 
     # ============================================================
+    async def _roster_queue_listener(self):
+        if not self.low_freq_q: return
+        loop = asyncio.get_running_loop()
+        while True:
+            try:
+                event = await loop.run_in_executor(None, self.low_freq_q.get)
+                name = event.get("name")
+                if event.get("type") == "arrival":
+                    self.roster_cache.add(name)
+                    if self.brain and self.brain_task and not self.brain_task.done():
+                        self.brain.send_text(f"[VISION] {name} has arrived.")
+                elif event.get("type") == "departure":
+                    self.roster_cache.discard(name)
+                    if self.brain and self.brain_task and not self.brain_task.done():
+                        self.brain.send_text(f"[VISION] {name} has departed.")
+            except Exception:
+                await asyncio.sleep(0.1)
+
+    async def _vision_queue_listener(self):
+        if not self.high_freq_q: return
+        loop = asyncio.get_running_loop()
+        while True:
+            try:
+                bboxes = await loop.run_in_executor(None, self.high_freq_q.get)
+                self.server.broadcast({"type": "vision_bboxes", "bboxes": bboxes})
+            except Exception:
+                await asyncio.sleep(0.1)
+
     async def run(self, autostart: bool):
         self._loop = asyncio.get_running_loop()
+        
+        if self.high_freq_q:
+            asyncio.create_task(self._vision_queue_listener(), name="vision_q")
+        if self.low_freq_q:
+            asyncio.create_task(self._roster_queue_listener(), name="roster_q")
+
         await self.server.start()
         self.status("offline", "asleep")
         self._on_robot_state(self.robot.snapshot())
@@ -215,11 +263,25 @@ def main():
     parser = argparse.ArgumentParser(description="Robot cognitive core")
     parser.add_argument("--auto", action="store_true", help="power the brain on at launch")
     args = parser.parse_args()
+    
+    mp.set_start_method('spawn', force=True)
+    high_q = mp.Queue(maxsize=10)
+    low_q = mp.Queue(maxsize=50)
+    
+    broker_proc = mp.Process(target=lambda: FrameBroker().run(), daemon=True)
+    worker_proc = mp.Process(target=run_worker, args=(high_q, low_q), daemon=True)
+    
+    broker_proc.start()
+    worker_proc.start()
+    
     try:
-        core = Core()
+        core = Core(high_q=high_q, low_q=low_q)
         asyncio.run(core.run(autostart=args.auto))
     except KeyboardInterrupt:
         print("\nshutdown. bye 👋")
+    finally:
+        broker_proc.terminate()
+        worker_proc.terminate()
 
 
 if __name__ == "__main__":

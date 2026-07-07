@@ -1,0 +1,6 @@
+@echo off
+echo Activating Conda environment 'face_demo'...
+call C:\Dev\Runtimes\Miniconda3\Scripts\activate.bat face_demo
+echo Starting Face Identification Demo...
+python main.py
+pause

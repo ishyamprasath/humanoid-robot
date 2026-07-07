@@ -25,3 +25,10 @@ Thumbs.db
 
 # local vendor bundles
 nexabot/.vendor/
+Project_Summary.md
+
+# Ignored face identification documentation
+backend/face_identification/FaceID_Gemini_merge.md
+backend/face_identification/face_id_windows_demo_plan.md
+backend/face_identification/robo-README.md
+backend/face_identification/vision_project_summary.md
