@@ -273,7 +273,7 @@
       return;
     }
     state.visionBoxes = boxes;
-    state.visionBoxesUntil = performance.now() + 900;
+    state.visionBoxesUntil = performance.now() + 1800;
   }
 
   function clearBoxes() {
@@ -290,8 +290,6 @@
 
     octx.save();
     octx.lineWidth = 3;
-    octx.strokeStyle = "rgba(34,197,94,0.95)";
-    octx.fillStyle = "rgba(15,23,42,0.88)";
     octx.font = "600 13px ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif";
 
     for (const item of state.visionBoxes) {
@@ -304,6 +302,9 @@
       const label = item.name
         ? `${item.name}${Number.isFinite(item.confidence) ? ` ${Math.round(item.confidence * 100)}%` : ""}`
         : "Person";
+      const known = item.is_unknown !== true && item.name !== "unknown";
+      octx.strokeStyle = known ? "rgba(34,197,94,0.95)" : "rgba(245,158,11,0.95)";
+      octx.fillStyle = known ? "rgba(6,95,70,0.92)" : "rgba(120,53,15,0.92)";
 
       octx.strokeRect(x1, y1, Math.max(1, x2 - x1), Math.max(1, y2 - y1));
       const labelWidth = Math.min(W - 8, Math.max(64, octx.measureText(label).width + 16));
@@ -312,7 +313,6 @@
       octx.fillRect(labelX, labelY, labelWidth, 22);
       octx.fillStyle = "#fff";
       octx.fillText(label, labelX + 8, labelY + 15);
-      octx.fillStyle = "rgba(15,23,42,0.88)";
     }
     octx.restore();
   }

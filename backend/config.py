@@ -31,6 +31,14 @@ def _load_env() -> None:
 
 _load_env()
 
+
+def _path_from_env(name: str, default: Path) -> Path:
+    raw = os.environ.get(name)
+    if not raw:
+        return default
+    path = Path(raw)
+    return path if path.is_absolute() else _ROOT / path
+
 # ---------------------------------------------------------------
 # Gemini Live (primary brain)
 # ---------------------------------------------------------------
@@ -94,11 +102,14 @@ SERIAL_BAUD = int(os.environ.get("SERIAL_BAUD", "115200"))
 # ---------------------------------------------------------------
 # Face ID / presence worker
 # ---------------------------------------------------------------
-FACE_MATCH_THRESHOLD = 0.38
+FACE_MATCH_THRESHOLD = float(os.environ.get("FACE_MATCH_THRESHOLD", "0.45"))
 TRACK_DEBOUNCE_FRAMES = 8
 TRACK_GRACE_PERIOD_SEC = 3.5
 EMBEDDING_RECOMPUTE_INTERVAL = 7
 MAX_ROSTER_PING_RATE = 2.0
+FACE_MEMORY_DIR = _path_from_env("FACE_MEMORY_DIR", _ROOT / "backend" / "face_memory")
+FACE_MAX_DESCRIPTORS = int(os.environ.get("FACE_MAX_DESCRIPTORS", "5"))
+FACE_COMMAND_TIMEOUT_SEC = float(os.environ.get("FACE_COMMAND_TIMEOUT_SEC", "5"))
 # Detection input size for the face worker. 640 is accurate but slow on CPU
 # (~0.4 fps); 320 roughly quadruples throughput and is plenty for webcam-range
 # faces. Bump back up if you have a CUDA GPU.
@@ -144,6 +155,15 @@ For navigate_to / task targets that are known locations, prefer the WORLD FRAME 
   - description: one-line natural-language goal ("bring the water bottle to the couch").
   - target_coordinates: WORLD frame if a location is known — {world_x, world_y} in meters; omit if the target is a person or unknown position.
   - priority: "low" | "normal" | "high".
+
+### PEOPLE, NAMES & MEMORY
+A local face-recognition worker is your sense of identity. It sends text context like "[VISION] An unfamiliar person is in view" or "[VISION] Shyam has arrived." Rules:
+1. Identity comes only from the vision worker. Never guess or pretend to recognize someone without it.
+2. If an unfamiliar person is in view, greet them warmly, ask for their name, and ask how to spell it if the name is ambiguous or unusual.
+3. Once the unfamiliar person tells you their name, immediately call remember_person(name) while their face is still visible. Then greet them by name.
+4. If a known person arrives, greet them by name briefly and naturally. Use remembered notes only if they fit.
+5. If the visible person shares a durable personal fact, call remember_fact(fact) quietly. Do not announce database or storage details.
+6. If someone asks to be forgotten, confirm and call forget_person(name).
 
 ### COGNITIVE RULES
 1. NATIVE VISUAL GROUNDING: When someone says "look at the red cup", find it in your video, compute camera-frame (x, y) + depth (z), then call execute_robot_action with "look_at". Never invent coordinates for something you can't see.

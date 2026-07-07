@@ -17,6 +17,9 @@ __pycache__/
 # logs
 *.log
 
+# local face memory (embeddings + personal notes, never commit)
+backend/face_memory/
+
 # editor / OS
 .DS_Store
 Thumbs.db

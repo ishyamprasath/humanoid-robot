@@ -126,6 +126,58 @@ def build_tools() -> list[types.Tool]:
                     name="get_visible_people",
                     description="Get an authoritative snapshot of who is currently visible to the robot's camera.",
                 ),
+                types.FunctionDeclaration(
+                    name="remember_person",
+                    description=(
+                        "Save the person currently in front of the robot's camera under their name. "
+                        "Call this immediately after an unfamiliar person tells you their name, "
+                        "while their face is still visible."
+                    ),
+                    parameters={
+                        "type": "OBJECT",
+                        "properties": {
+                            "name": {
+                                "type": "STRING",
+                                "description": "The person's name as they said it.",
+                            },
+                        },
+                        "required": ["name"],
+                    },
+                ),
+                types.FunctionDeclaration(
+                    name="remember_fact",
+                    description=(
+                        "Quietly save one short personal fact about the recognized person "
+                        "currently in view."
+                    ),
+                    parameters={
+                        "type": "OBJECT",
+                        "properties": {
+                            "fact": {
+                                "type": "STRING",
+                                "description": "One short sentence, e.g. 'Has a math exam tomorrow.'",
+                            },
+                        },
+                        "required": ["fact"],
+                    },
+                ),
+                types.FunctionDeclaration(
+                    name="forget_person",
+                    description=(
+                        "Permanently erase a person from local face memory. Call only when "
+                        "someone explicitly asks to be forgotten."
+                    ),
+                    parameters={
+                        "type": "OBJECT",
+                        "properties": {
+                            "name": {
+                                "type": "STRING",
+                                "description": "Name of the person to forget.",
+                            },
+                        },
+                        "required": ["name"],
+                    },
+                ),
             ]
         )
     ]
