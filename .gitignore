@@ -1,0 +1,30 @@
+# secrets
+.env
+.env.local
+.env.*.local
+
+# node
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+
+# logs
+*.log
+
+# claude local settings
+.claude/settings.local.json
+
+# editor / OS
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# local vendor bundles
+nexabot/.vendor/

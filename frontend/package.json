@@ -1,0 +1,18 @@
+{
+  "name": "nexabot",
+  "private": true,
+  "version": "2.0.0",
+  "type": "module",
+  "description": "Robot cognitive core — browser-native Gemini Live client (no backend)",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@google/genai": "^1.16.0"
+  },
+  "devDependencies": {
+    "vite": "^7.1.3"
+  }
+}
