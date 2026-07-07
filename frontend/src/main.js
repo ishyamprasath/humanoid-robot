@@ -12,9 +12,12 @@ import { GoogleGenAI, Modality } from "@google/genai";
 import { MicCapture, SpeakerPlayer } from "./audio.js";
 import {
   API_KEY, CAMERA_HFOV, MAX_RETRIES, MODEL, MODEL_FRAME_FPS,
-  MODEL_FRAME_JPEG_QUALITY, MODEL_FRAME_WIDTH, RETRY_DELAY_MS,
-  ROOM_HALF_METERS as ROOM_HALF, SEND_SAMPLE_RATE, SYSTEM_PROMPT, VOICE_NAME,
+  MODEL_FRAME_JPEG_QUALITY, MODEL_FRAME_WIDTH, REGREET_COOLDOWN_MS,
+  RETRY_DELAY_MS, ROOM_HALF_METERS as ROOM_HALF, SEND_SAMPLE_RATE,
+  SYSTEM_PROMPT, VOICE_NAME,
 } from "./config.js";
+import { FaceEngine } from "./faces.js";
+import { PeopleStore } from "./people-store.js";
 import { Robot } from "./robot.js";
 import { buildTools } from "./tools.js";
 
@@ -31,6 +34,7 @@ const els = {
   coordWorld: $("coordWorld"), coordHeading: $("coordHeading"),
   coordCam: $("coordCam"), coordWorldTarget: $("coordWorldTarget"),
   statGripper: $("statGripper"), statCurrentTask: $("statCurrentTask"),
+  statVisitor: $("statVisitor"),
 };
 
 // ----------------------------------------------------------
@@ -45,6 +49,8 @@ const state = {
   lookTarget: null,
   tasks: [],
   trail: [{ x: 0, y: 0 }],
+  visitor: null,   // null | "unknown" | person name
+  faceBox: null,   // normalized {x,y,w,h,label} for the camera overlay
 };
 
 let ai = null;
@@ -148,6 +154,119 @@ const robot = new Robot({
     renderHud();
   },
 });
+
+// ----------------------------------------------------------
+// Face memory — who is in front of me, and what do I know?
+// (in-browser recognition, IndexedDB memory — no cloud)
+// ----------------------------------------------------------
+const peopleStore = new PeopleStore();
+const lastGreeted = new Map(); // name -> last proactive-greeting timestamp
+
+const faceEngine = new FaceEngine({
+  store: peopleStore,
+  onLog: logAction,
+  onFaceBox: (box) => { state.faceBox = box; },
+  onPersonChange: (who) => { handlePersonChange(who); },
+});
+
+function timeOfDay() {
+  const h = new Date().getHours();
+  return h < 12 ? "morning" : h < 17 ? "afternoon" : h < 21 ? "evening" : "night";
+}
+function timeContext() {
+  const now = new Date();
+  const dateStr = now.toLocaleDateString([], { weekday: "long", year: "numeric", month: "long", day: "numeric" });
+  const timeStr = now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  return `Today is ${dateStr}. Local time: ${timeStr} — ${timeOfDay()}.`;
+}
+
+function sendContext(text, complete) {
+  try {
+    session?.sendClientContent({
+      turns: [{ role: "user", parts: [{ text }] }],
+      turnComplete: complete,
+    });
+  } catch {}
+}
+
+async function handlePersonChange(who) {
+  state.visitor = who;
+  if (who === null || !session) return;
+
+  if (who === "unknown") {
+    logAction("👤 unfamiliar face in view");
+    // Proactive stranger greeting: starts with a warm "Hey!" and asks for their name.
+    sendContext(
+      `(Vision system: an unfamiliar person has come into view. ${timeContext()} ` +
+      "Greet them warmly and briefly starting with 'Hey!' or 'Hey there!', ask for their good name, " +
+      "and ask how to spell it if it is needed or unusual, then wait for their response. Do not call remember_person yet.)",
+      true
+    );
+    return;
+  }
+
+  logAction(`👤 recognized ${who}`);
+  peopleStore.touch(who);
+  const now = Date.now();
+  if (now - (lastGreeted.get(who) || 0) < REGREET_COOLDOWN_MS) return;
+  lastGreeted.set(who, now);
+
+  const person = (await peopleStore.loadAll()).find((p) => p.name === who);
+  const notes = person?.notes?.length
+    ? ` What you remember about them: ${person.notes.join("; ")}.`
+    : "";
+  // turnComplete: true -> the robot speaks FIRST (proactive greeting)
+  sendContext(
+    `(Vision system: ${who} just came into view. ${timeContext()}${notes} ` +
+    "Greet them by name proactively starting with a warm 'Hey!', matching the time of day, " +
+    "and weave in a remembered detail if it feels natural.)",
+    true
+  );
+}
+
+async function executePeopleTool(name, args) {
+  try {
+    if (name === "remember_person") {
+      const personName = String(args.name || "").trim();
+      if (!personName) return { status: "error", reason: "no name given" };
+      const desc = faceEngine.captureDescriptor();
+      if (!desc) {
+        return { status: "error", reason: "no face clearly visible right now — ask them to face the camera" };
+      }
+      await peopleStore.savePerson(personName, desc);
+      await faceEngine.refreshMatcher();
+      lastGreeted.set(personName, Date.now()); // just met — skip the proactive re-greet
+      logAction(`🧠 remembered person: ${personName}`);
+      return { status: "success", remembered: personName };
+    }
+
+    if (name === "remember_fact") {
+      const fact = String(args.fact || "").trim();
+      const who = faceEngine.current && faceEngine.current !== "unknown" ? faceEngine.current : null;
+      if (!who) return { status: "error", reason: "no recognized person in view to attach this memory to" };
+      if (!fact) return { status: "error", reason: "empty fact" };
+      await peopleStore.addNote(who, fact);
+      logAction(`🧠 noted about ${who}: ${fact}`);
+      return { status: "success", person: who, noted: fact };
+    }
+
+    if (name === "forget_person") {
+      const personName = String(args.name || "").trim();
+      const removed = await peopleStore.removeByName(personName);
+      await faceEngine.refreshMatcher();
+      lastGreeted.delete(personName);
+      logAction(removed ? `🗑 forgot ${personName}` : `forget_person: "${personName}" not found`);
+      return removed
+        ? { status: "success", forgot: personName }
+        : { status: "error", reason: `no one named "${personName}" in memory` };
+    }
+
+    return { status: "error", reason: `unknown people tool "${name}"` };
+  } catch (e) {
+    return { status: "error", reason: String(e?.message || e) };
+  }
+}
+const PEOPLE_TOOLS = new Set(["remember_person", "remember_fact", "forget_person"]);
 
 // ----------------------------------------------------------
 // Camera — native-fps preview + throttled model frames
@@ -303,12 +422,20 @@ async function connect() {
   if (camOk) {
     startFrameUpload(gen);
     logAction(`camera stream: native fps on screen · ${MODEL_FRAME_FPS} fps to the model`);
+    faceEngine.init().then((ok) => {
+      if (ok && gen === sessionGen) faceEngine.start(els.cameraFeed);
+    });
   }
 
+  const knownNames = (await peopleStore.loadAll()).map((p) => p.name);
+  const knownTxt = knownNames.length
+    ? `People you already know by face: ${knownNames.join(", ")}.`
+    : "You don't know anyone by face yet.";
   session.sendClientContent({
     turns: [{
       role: "user",
-      parts: [{ text: "(System boot complete. Greet whoever is nearby warmly and briefly in your own voice.)" }],
+      parts: [{ text:
+        `(System boot complete. ${timeContext()} ${knownTxt} Say a short and warm "Hey!" or "Hey there!", matching the time of day, and wait for the user to respond.)` }],
     }],
     turnComplete: true,
   });
@@ -319,12 +446,17 @@ function handleServerMessage(msg) {
 
   const tc = msg.toolCall;
   if (tc?.functionCalls?.length) {
-    const functionResponses = tc.functionCalls.map((fc) => ({
+    Promise.all(tc.functionCalls.map(async (fc) => ({
       id: fc.id,
       name: fc.name,
-      response: { result: robot.execute(fc.name, fc.args || {}) },
-    }));
-    try { session?.sendToolResponse({ functionResponses }); } catch {}
+      response: {
+        result: PEOPLE_TOOLS.has(fc.name)
+          ? await executePeopleTool(fc.name, fc.args || {})
+          : robot.execute(fc.name, fc.args || {}),
+      },
+    }))).then((functionResponses) => {
+      try { session?.sendToolResponse({ functionResponses }); } catch {}
+    });
   }
 
   const sc = msg.serverContent;
@@ -357,6 +489,9 @@ function maybeReconnect(reason) {
 
 function teardownMedia() {
   if (frameTimer) { clearInterval(frameTimer); frameTimer = null; }
+  faceEngine.stop();
+  state.visitor = null;
+  state.faceBox = null;
   mic?.stop(); mic = null;
   player?.stop(); player = null;
   stopCamera();
@@ -449,6 +584,10 @@ function renderHud() {
     ? `${signed(lt.world.x)} , ${signed(lt.world.y)}  m` : "—";
   els.statGripper.textContent = state.gripper.toUpperCase();
   els.statGripper.className = `metric-value ${state.gripper === "closed" ? "warn" : "ok"}`;
+  els.statVisitor.textContent =
+    state.visitor === null ? "—" : state.visitor === "unknown" ? "unknown" : state.visitor;
+  els.statVisitor.className =
+    `metric-value ${state.visitor === "unknown" ? "warn" : state.visitor ? "ok" : ""}`;
   const active = state.tasks.find((t) => t.status === "active");
   els.statCurrentTask.textContent = active ? `${active.type} · ${active.description}` : "idle";
 }
@@ -595,6 +734,25 @@ function drawWorld() {
 function drawOverlay() {
   const W = els.cameraOverlay.width, H = els.cameraOverlay.height;
   octx.clearRect(0, 0, W, H);
+
+  // face recognition box + name badge
+  const fb = state.faceBox;
+  if (fb) {
+    const known = fb.label !== "unknown";
+    const x = fb.x * W, y = fb.y * H, w = fb.w * W, h = fb.h * H;
+    octx.strokeStyle = known ? "rgba(16,185,129,0.95)" : "rgba(245,158,11,0.95)";
+    octx.lineWidth = 2;
+    octx.strokeRect(x, y, w, h);
+    const label = known ? fb.label : "unknown";
+    octx.font = "600 12px system-ui, sans-serif";
+    const tw = octx.measureText(label).width;
+    const by = Math.max(18, y);
+    octx.fillStyle = known ? "rgba(6,95,70,0.92)" : "rgba(120,53,15,0.92)";
+    octx.fillRect(x, by - 18, tw + 12, 18);
+    octx.fillStyle = "#fff";
+    octx.fillText(label, x + 6, by - 5);
+  }
+
   const lt = state.lookTarget;
   if (!lt) return;
   const px = lt.cam.x * W, py = lt.cam.y * H;

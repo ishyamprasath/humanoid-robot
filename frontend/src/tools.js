@@ -111,6 +111,47 @@ export function buildTools() {
             required: ["task_type", "description"],
           },
         },
+        {
+          name: "remember_person",
+          description:
+            "Save the person currently in front of your camera under their name. Call this " +
+            "IMMEDIATELY after a new person tells you their name, so you recognize them by " +
+            "face forever after. Requires their face to be visible right now.",
+          parameters: {
+            type: "OBJECT",
+            properties: {
+              name: { type: "STRING", description: "The person's name as they said it." },
+            },
+            required: ["name"],
+          },
+        },
+        {
+          name: "remember_fact",
+          description:
+            "Quietly save one short personal fact about the person you're currently talking " +
+            "to (their job, likes, plans, exams, projects, pets…). Call it whenever they share " +
+            "something worth remembering — it becomes your memory of them for future visits.",
+          parameters: {
+            type: "OBJECT",
+            properties: {
+              fact: { type: "STRING", description: "One short sentence, e.g. \"Has a math exam tomorrow.\"" },
+            },
+            required: ["fact"],
+          },
+        },
+        {
+          name: "forget_person",
+          description:
+            "Permanently erase a person (face + name + memories) from your memory. Call only " +
+            "when someone explicitly asks to be forgotten.",
+          parameters: {
+            type: "OBJECT",
+            properties: {
+              name: { type: "STRING", description: "Name of the person to forget." },
+            },
+            required: ["name"],
+          },
+        },
       ],
     },
   ];

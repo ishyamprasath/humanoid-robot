@@ -5,7 +5,7 @@
 class Pcm16Capture extends AudioWorkletProcessor {
   constructor() {
     super();
-    this._buf = new Int16Array(512);
+    this._buf = new Int16Array(256);
     this._len = 0;
   }
 

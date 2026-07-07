@@ -30,7 +30,7 @@ export class MicCapture {
         autoGainControl: true,
       },
     });
-    this._ctx = new AudioContext({ sampleRate: SEND_SAMPLE_RATE });
+    this._ctx = new AudioContext({ sampleRate: SEND_SAMPLE_RATE, latencyHint: "interactive" });
     if (this._ctx.state === "suspended") await this._ctx.resume();
     await this._ctx.audioWorklet.addModule(workletUrl);
     const src = this._ctx.createMediaStreamSource(this._stream);
@@ -67,7 +67,7 @@ export class MicCapture {
 export class SpeakerPlayer {
   constructor({ onSpeaking }) {
     this.onSpeaking = onSpeaking || (() => {});
-    this._ctx = new AudioContext({ sampleRate: RECV_SAMPLE_RATE });
+    this._ctx = new AudioContext({ sampleRate: RECV_SAMPLE_RATE, latencyHint: "interactive" });
     this._nextTime = 0;
     this._sources = new Set();
   }
@@ -88,7 +88,7 @@ export class SpeakerPlayer {
     const src = this._ctx.createBufferSource();
     src.buffer = buf;
     src.connect(this._ctx.destination);
-    const t = Math.max(this._ctx.currentTime + 0.03, this._nextTime);
+    const t = Math.max(this._ctx.currentTime + 0.012, this._nextTime);
     src.start(t);
     this._nextTime = t + buf.duration;
     this._sources.add(src);
