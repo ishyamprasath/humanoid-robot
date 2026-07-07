@@ -16,6 +16,7 @@ __pycache__/
 
 # logs
 *.log
+*.err
 
 # local face memory (embeddings + personal notes, never commit)
 backend/face_memory/

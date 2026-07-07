@@ -12,15 +12,24 @@ from typing import Callable
 
 from google import genai
 from google.genai import types
+import google.genai.live as genai_live
 
-# Monkey-patch websockets to disable ping_interval for Gemini Live API
+# google-genai captures websockets.asyncio.client.connect as live.ws_connect
+# during import, so patch both the source symbol and the captured SDK alias.
+import websockets
 import websockets.asyncio.client
 _original_connect = websockets.asyncio.client.connect
+
+
 def _patched_connect(*args, **kwargs):
     kwargs["ping_interval"] = None
     kwargs["ping_timeout"] = None
     return _original_connect(*args, **kwargs)
+
+
 websockets.asyncio.client.connect = _patched_connect
+websockets.connect = _patched_connect
+genai_live.ws_connect = _patched_connect
 
 from config import (GEMINI_API_KEY, GEMINI_API_VERSION, GEMINI_MODEL,
                     SEND_SAMPLE_RATE, SYSTEM_PROMPT, VIDEO_GEMINI_FPS,
