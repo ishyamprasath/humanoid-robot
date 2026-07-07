@@ -13,6 +13,15 @@ from typing import Callable
 from google import genai
 from google.genai import types
 
+# Monkey-patch websockets to disable ping_interval for Gemini Live API
+import websockets.asyncio.client
+_original_connect = websockets.asyncio.client.connect
+def _patched_connect(*args, **kwargs):
+    kwargs["ping_interval"] = None
+    kwargs["ping_timeout"] = None
+    return _original_connect(*args, **kwargs)
+websockets.asyncio.client.connect = _patched_connect
+
 from config import (GEMINI_API_KEY, GEMINI_API_VERSION, GEMINI_MODEL,
                     SEND_SAMPLE_RATE, SYSTEM_PROMPT, VOICE_NAME)
 from tools import build_tools

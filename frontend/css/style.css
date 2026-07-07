@@ -298,11 +298,27 @@ button { border: 0; background: none; cursor: pointer; }
 /* ─────────── Workspace ─────────── */
 
 .workspace {
-  display: grid;
-  grid-template-columns: 340px minmax(0, 1fr) 380px;
+  display: flex;
+  flex-direction: column;
   gap: 20px;
   padding: 20px 28px 32px;
   flex: 1;
+}
+
+.workspace-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+
+.vision-hero .camera-wrap {
+  aspect-ratio: auto;
+  height: 75vh;
+  min-height: 500px;
+}
+.vision-hero .camera-wrap img,
+.vision-hero .camera-wrap canvas {
+  object-fit: contain;
 }
 .col {
   display: flex;
@@ -463,6 +479,42 @@ button { border: 0; background: none; cursor: pointer; }
   animation: speakingPulse 1.2s ease-in-out infinite;
 }
 @keyframes speakingPulse { 50% { transform: scale(1.35); } }
+
+/* ─────────── Conversation & Audio Cards ─────────── */
+
+.conversation-card, .audio-card {
+  flex: 1;
+}
+.conversation-card .log {
+  flex: 1;
+  height: 250px;
+}
+
+.audio-pulse-wrap {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 30px;
+  padding: 40px;
+}
+.audio-card .mic-meter {
+  width: 100%;
+  height: 48px;
+  border-radius: var(--r-full);
+}
+.audio-card .speaking-indicator {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 16px;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+.audio-card .speaking-indicator .speaking {
+  font-size: 24px;
+}
 
 /* ─────────── Coordinates ─────────── */
 
@@ -774,16 +826,21 @@ button { border: 0; background: none; cursor: pointer; }
 
 @media (max-width: 1280px) {
   .workspace {
-    grid-template-columns: 320px minmax(0, 1fr);
     gap: 16px;
     padding: 16px 20px 24px;
+  }
+  .workspace-grid {
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
   }
   .col.right { grid-column: 1 / -1; grid-row: 2; }
 }
 @media (max-width: 900px) {
   .workspace {
-    grid-template-columns: 1fr;
     padding: 14px;
+  }
+  .workspace-grid {
+    grid-template-columns: 1fr;
   }
   .col.right { grid-column: auto; grid-row: auto; }
   .topbar {

@@ -20,12 +20,7 @@
     linkPill: $("linkPill"), linkText: $("linkText"),
     cameraFrame: $("cameraFrame"), cameraOverlay: $("cameraOverlay"), cameraIdle: $("cameraIdle"),
     micMeterFill: $("micMeterFill"), speakingDot: $("speakingDot"),
-    simCanvas: $("simCanvas"),
     transcript: $("transcript"), textInput: $("textInput"), textSend: $("textSend"),
-    taskList: $("taskList"), actionLog: $("actionLog"),
-    coordWorld: $("coordWorld"), coordHeading: $("coordHeading"),
-    coordCam: $("coordCam"), coordWorldTarget: $("coordWorldTarget"),
-    statGripper: $("statGripper"), statCurrentTask: $("statCurrentTask"),
   };
 
   // ----------------------------------------------------------
@@ -117,12 +112,10 @@
         state.lookTarget = msg.look_target
           ? { ...msg.look_target, shownUntil: performance.now() + 6000 }
           : state.lookTarget;
-        renderTasks();
-        renderHud();
         break;
       }
       case "action":
-        logAction(actionLabel(msg));
+        // logAction(actionLabel(msg)); // Action log removed
         break;
       case "frame": {
         els.cameraFrame.src = `data:image/jpeg;base64,${msg.jpeg_b64}`;
@@ -130,10 +123,10 @@
         break;
       }
       case "log":
-        logAction(msg.text);
+        // logAction(msg.text); // Action log removed
         break;
       case "interrupted":
-        logAction("interrupted — user barge-in");
+        // logAction("interrupted — user barge-in"); // Action log removed
         break;
     }
   }
@@ -179,73 +172,32 @@
   }
 
   function logAction(text) {
-    const div = document.createElement("div");
-    div.className = "line";
-    div.textContent = `${new Date().toLocaleTimeString([], { hour12: false })} · ${text}`;
-    els.actionLog.appendChild(div);
-    els.actionLog.scrollTop = els.actionLog.scrollHeight;
-    while (els.actionLog.children.length > 300) els.actionLog.removeChild(els.actionLog.firstChild);
+    // Action log removed from UI
   }
 
   // ----------------------------------------------------------
   // Task queue
   // ----------------------------------------------------------
   function renderTasks() {
-    const el = els.taskList;
-    el.innerHTML = "";
-    if (!state.tasks.length) {
-      const empty = document.createElement("div");
-      empty.className = "empty";
-      empty.textContent = "No tasks yet. Ask the robot to do something.";
-      el.appendChild(empty);
-      return;
-    }
-    for (const t of state.tasks) {
-      const row = document.createElement("div");
-      row.className = `task task-${t.status} priority-${t.priority}`;
-      const target = t.target ? ` · ${signed(t.target.x)}, ${signed(t.target.y)} m` : "";
-      row.innerHTML = `
-        <div class="task-head">
-          <span class="task-type">${esc(t.type)}</span>
-          <span class="task-status">${esc(t.status)}</span>
-        </div>
-        <div class="task-desc">${esc(t.description)}</div>
-        <div class="task-meta">priority ${esc(t.priority)}${target}</div>`;
-      el.appendChild(row);
-    }
+    // Task list removed from UI
   }
 
   // ----------------------------------------------------------
   // HUD
   // ----------------------------------------------------------
   function renderHud() {
-    const s = state.shown;
-    els.coordWorld.textContent = `${signed(s.x)} , ${signed(s.y)}  m`;
-    const deg = Math.round((s.heading * 180 / Math.PI + 360) % 360);
-    els.coordHeading.textContent = `${deg}° ${arrowFor(deg)}`;
-    const lt = state.lookTarget;
-    els.coordCam.textContent = lt
-      ? `(${lt.cam.x.toFixed(2)}, ${lt.cam.y.toFixed(2)}) · z ${lt.cam.z.toFixed(2)} m` : "—";
-    els.coordWorldTarget.textContent = lt
-      ? `${signed(lt.world.x)} , ${signed(lt.world.y)}  m` : "—";
-    els.statGripper.textContent = state.gripper.toUpperCase();
-    els.statGripper.className = `metric-value ${state.gripper === "closed" ? "warn" : "ok"}`;
-    const active = state.tasks.find((t) => t.status === "active");
-    els.statCurrentTask.textContent = active ? `${active.type} · ${active.description}` : "idle";
+    // HUD removed from UI
   }
 
   // ----------------------------------------------------------
   // World map + camera overlay render loop
   // ----------------------------------------------------------
-  const ctx = els.simCanvas.getContext("2d");
+  // Canvas removed from UI
+  // const ctx = els.simCanvas.getContext("2d");
   const octx = els.cameraOverlay.getContext("2d");
 
   function worldToCanvas(wx, wy) {
-    const W = els.simCanvas.width, H = els.simCanvas.height;
-    return {
-      cx: ((wx + ROOM_HALF) / (2 * ROOM_HALF)) * W,
-      cy: H - ((wy + ROOM_HALF) / (2 * ROOM_HALF)) * H,
-    };
+    return { cx: 0, cy: 0 };
   }
 
   function tick() {
@@ -264,113 +216,14 @@
     }
     if (state.lookTarget && performance.now() > state.lookTarget.shownUntil) state.lookTarget = null;
 
-    drawWorld();
+    // drawWorld(); // Map removed from UI
     drawOverlay();
-    renderHud();
+    // renderHud(); // HUD removed from UI
     requestAnimationFrame(tick);
   }
 
   function drawWorld() {
-    const W = els.simCanvas.width, H = els.simCanvas.height;
-    ctx.clearRect(0, 0, W, H);
-    ctx.fillStyle = "#fafaf7";
-    ctx.fillRect(0, 0, W, H);
-
-    // 0.5 m grid
-    ctx.strokeStyle = "rgba(24,24,27,0.06)";
-    ctx.lineWidth = 1;
-    for (let m = -ROOM_HALF; m <= ROOM_HALF; m += 0.5) {
-      const { cx } = worldToCanvas(m, 0);
-      const { cy } = worldToCanvas(0, m);
-      ctx.beginPath(); ctx.moveTo(cx, 0); ctx.lineTo(cx, H); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(0, cy); ctx.lineTo(W, cy); ctx.stroke();
-    }
-
-    // origin cross + meter labels
-    const o = worldToCanvas(0, 0);
-    ctx.strokeStyle = "rgba(24,24,27,0.18)";
-    ctx.lineWidth = 1.5;
-    ctx.beginPath(); ctx.moveTo(o.cx - 8, o.cy); ctx.lineTo(o.cx + 8, o.cy); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(o.cx, o.cy - 8); ctx.lineTo(o.cx, o.cy + 8); ctx.stroke();
-    ctx.fillStyle = "rgba(24,24,27,0.35)";
-    ctx.font = "10px ui-monospace, Consolas, monospace";
-    for (let m = -1; m <= 1; m++) {
-      if (!m) continue;
-      const { cx } = worldToCanvas(m, 0);
-      const { cy } = worldToCanvas(0, m);
-      ctx.fillText(`${m > 0 ? "+" : ""}${m}`, cx + 3, o.cy - 3);
-      ctx.fillText(`${m > 0 ? "+" : ""}${m}`, o.cx + 3, cy - 3);
-    }
-
-    ctx.strokeStyle = "rgba(24,24,27,0.5)";
-    ctx.lineWidth = 2;
-    ctx.strokeRect(1, 1, W - 2, H - 2);
-
-    // trail
-    if (state.trail.length > 1) {
-      ctx.strokeStyle = "rgba(99,102,241,0.35)";
-      ctx.lineWidth = 2;
-      ctx.setLineDash([4, 4]);
-      ctx.beginPath();
-      const p0 = worldToCanvas(state.trail[0].x, state.trail[0].y);
-      ctx.moveTo(p0.cx, p0.cy);
-      for (const p of state.trail) {
-        const q = worldToCanvas(p.x, p.y);
-        ctx.lineTo(q.cx, q.cy);
-      }
-      ctx.stroke();
-      ctx.setLineDash([]);
-    }
-
-    // active task target
-    const activeTask = state.tasks.find((t) => t.status === "active" && t.target);
-    if (activeTask) {
-      const t = worldToCanvas(activeTask.target.x, activeTask.target.y);
-      ctx.strokeStyle = "rgba(168,85,247,0.85)";
-      ctx.lineWidth = 2;
-      ctx.setLineDash([6, 4]);
-      ctx.beginPath(); ctx.arc(t.cx, t.cy, 18, 0, Math.PI * 2); ctx.stroke();
-      ctx.setLineDash([]);
-      ctx.fillStyle = "rgba(168,85,247,0.85)";
-      ctx.font = "600 11px system-ui, sans-serif";
-      ctx.fillText(`🎯 ${activeTask.type}`, t.cx + 22, t.cy + 4);
-    }
-
-    // look target
-    if (state.lookTarget) {
-      const l = worldToCanvas(state.lookTarget.world.x, state.lookTarget.world.y);
-      ctx.strokeStyle = "rgba(234,179,8,0.9)";
-      ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.arc(l.cx, l.cy, 10, 0, Math.PI * 2); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(l.cx - 12, l.cy); ctx.lineTo(l.cx + 12, l.cy); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(l.cx, l.cy - 12); ctx.lineTo(l.cx, l.cy + 12); ctx.stroke();
-    }
-
-    // robot
-    const s = state.shown;
-    const p = worldToCanvas(s.x, s.y);
-    const canvasHeading = -s.heading;  // canvas y is flipped
-
-    ctx.fillStyle = "rgba(99,102,241,0.14)";
-    ctx.beginPath();
-    ctx.moveTo(p.cx, p.cy);
-    ctx.arc(p.cx, p.cy, 60, canvasHeading - CAMERA_HFOV / 2, canvasHeading + CAMERA_HFOV / 2);
-    ctx.closePath();
-    ctx.fill();
-
-    ctx.fillStyle = "#18181b";
-    ctx.beginPath(); ctx.arc(p.cx, p.cy, 9, 0, Math.PI * 2); ctx.fill();
-    ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; ctx.stroke();
-
-    ctx.strokeStyle = "#6366f1"; ctx.lineWidth = 3;
-    ctx.beginPath(); ctx.moveTo(p.cx, p.cy);
-    ctx.lineTo(p.cx + Math.cos(canvasHeading) * 18, p.cy + Math.sin(canvasHeading) * 18);
-    ctx.stroke();
-
-    ctx.fillStyle = state.gripper === "closed" ? "#f59e0b" : "#10b981";
-    ctx.beginPath();
-    ctx.arc(p.cx + Math.cos(canvasHeading) * 18, p.cy + Math.sin(canvasHeading) * 18, 4, 0, Math.PI * 2);
-    ctx.fill();
+    // Map removed from UI
   }
 
   function drawOverlay() {
@@ -401,7 +254,7 @@
   function esc(v) { return String(v).replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 
   // boot
-  logAction("display client ready — connecting to Python core…");
+  // logAction("display client ready — connecting to Python core…");
   connect();
   requestAnimationFrame(tick);
 })();
