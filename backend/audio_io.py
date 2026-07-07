@@ -37,8 +37,15 @@ class MicCapture:
         rms = float(np.sqrt(np.mean(samples * samples)))
         self.on_level(rms)
         pcm = np.clip(samples * 32767.0, -32768, 32767).astype(np.int16).tobytes()
+
+        def _safe_enqueue():
+            try:
+                self._out.put_nowait(pcm)
+            except asyncio.QueueFull:
+                pass  # Drop audio to prevent lag/crashing if network blocks
+
         try:
-            self._loop.call_soon_threadsafe(self._out.put_nowait, pcm)
+            self._loop.call_soon_threadsafe(_safe_enqueue)
         except RuntimeError:
             pass  # loop closed during shutdown
 

@@ -79,7 +79,7 @@ class StateServer:
     # ------------------------------------------------------------
     def broadcast(self, msg: dict):
         """Send to every connected display. Safe to call from any thread."""
-        if msg.get("type") in ("status", "robot", "speaking", "frame"):
+        if msg.get("type") in ("status", "robot", "speaking", "frame", "camera_state"):
             self._snapshot[msg["type"]] = msg
         if self._loop is None:
             return

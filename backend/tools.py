@@ -122,6 +122,10 @@ def build_tools() -> list[types.Tool]:
                         "required": ["task_type", "description"],
                     },
                 ),
+                types.FunctionDeclaration(
+                    name="get_visible_people",
+                    description="Get an authoritative snapshot of who is currently visible to the robot's camera.",
+                ),
             ]
         )
     ]
