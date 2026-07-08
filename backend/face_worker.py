@@ -151,8 +151,12 @@ class FaceIDWorker:
                     result = self.memory.remember_fact(self.latest_label, cmd.get("fact", ""))
                 elif action == "forget_person":
                     result = self.memory.forget_person(cmd.get("name", ""))
-                    if result.get("status") == "success" and result.get("forgot") == self.latest_label:
-                        self.latest_label = "unknown"
+                    forgot = result.get("forgot")
+                    if result.get("status") == "success" and forgot:
+                        if forgot == self.latest_label:
+                            self.latest_label = "unknown"
+                        if forgot == self.current_presence:
+                            self.current_presence = "unknown"
                 else:
                     result = {"status": "error", "reason": f'unknown face command "{action}"'}
             except Exception as exc:  # noqa: BLE001

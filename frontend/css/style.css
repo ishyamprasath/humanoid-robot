@@ -486,8 +486,7 @@ button { border: 0; background: none; cursor: pointer; }
   flex: 1;
 }
 .conversation-card .log {
-  flex: 1;
-  height: 250px;
+  height: 300px;
 }
 
 .audio-pulse-wrap {
@@ -666,6 +665,7 @@ button { border: 0; background: none; cursor: pointer; }
 .log .line {
   padding: 3px 0;
   word-wrap: break-word;
+  white-space: pre-wrap;
   animation: lineIn 0.28s var(--ease-out) both;
 }
 .log .line b {

@@ -49,6 +49,7 @@ from hardware_bridge import HardwareBridge
 from robot import Robot
 from state_server import StateServer
 from video_io import CameraFeed
+from cli_handler import CommandHandler
 
 
 class Core:
@@ -69,6 +70,7 @@ class Core:
         self.face_result_q = face_result_q
         self._pending_face_results = {}
         self.roster_cache = set()
+        self.cli = CommandHandler(self)
 
         self.brain: GeminiLiveBrain | None = None
         self.brain_task: asyncio.Task | None = None
@@ -145,6 +147,13 @@ class Core:
                 return
             self.server.broadcast({"type": "transcript", "role": "user", "text": text})
             self.server.broadcast({"type": "turn_complete"})
+            
+            if text.startswith("/"):
+                res = self.cli.execute(text)
+                self.server.broadcast({"type": "transcript", "role": "robot", "text": f"System:\n{res}"})
+                self.server.broadcast({"type": "turn_complete"})
+                return
+
             if self.brain and self.brain_task and not self.brain_task.done():
                 self.brain.send_text(text)
             else:
@@ -288,6 +297,12 @@ class Core:
                     if name:
                         self.roster_cache.discard("unknown")
                         self.roster_cache.add(name)
+                        self.server.broadcast({"type": "roster", "people": sorted(self.roster_cache)})
+                elif action == "forget_person" and result.get("status") == "success":
+                    name = result.get("forgot")
+                    if name:
+                        self.roster_cache.discard(name)
+                        self.roster_cache.add("unknown")
                         self.server.broadcast({"type": "roster", "people": sorted(self.roster_cache)})
                 return result
             self._pending_face_results[result_id] = result
