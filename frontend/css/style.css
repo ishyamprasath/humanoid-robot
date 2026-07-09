@@ -81,6 +81,7 @@
 /* ─────────── Base ─────────── */
 
 html, body {
+  height: 100%;
   min-height: 100vh;
   background: var(--bg);
   color: var(--text);
@@ -98,6 +99,7 @@ html, body {
 body {
   display: flex;
   flex-direction: column;
+  height: 100vh;
   background:
     radial-gradient(1200px 500px at 82% -8%,  rgba(79, 70, 229, 0.06), transparent 62%),
     radial-gradient(900px 400px at -8% 105%,  rgba(180, 83, 9, 0.045), transparent 62%),
@@ -299,12 +301,17 @@ button { border: 0; background: none; cursor: pointer; }
 
 .workspace {
   display: flex;
-  flex-direction: column;
-  height: calc(100vh - 67px); /* fill screen minus topbar height */
+  flex-direction: row;          /* two equal columns: camera | robot face */
+  flex: 1;                      /* fill all remaining height in the body flex column */
+  min-height: 0;                /* allow flex child to shrink below content size */
   overflow: hidden;
-  flex: 1;
   position: relative;
   background: #09090b;
+}
+.workspace > .full-cam-container,
+.workspace > .face-container {
+  flex: 1 1 0;                  /* each column takes exactly half */
+  min-width: 0;
 }
 .col {
   display: none; /* hidden columns in full screen view */
@@ -337,42 +344,32 @@ button { border: 0; background: none; cursor: pointer; }
   box-shadow: inset 0 0 80px rgba(0, 0, 0, 0.4);
 }
 
-/* ─────────── Voice Bar ─────────── */
+/* ─────────── Robot Face (LED dot-matrix) ─────────── */
 
-.voice-bar {
-  display: flex;
-  align-items: center;
-  gap: 20px;
-  padding: 16px 28px;
-  background: rgba(246, 245, 240, 0.95);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
-  border-top: 1px solid var(--border);
-  z-index: 10;
-}
-.voice-bar .speaking {
-  font-size: 20px;
-}
-.voice-bar .mic-label {
-  font-size: 11px;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  font-weight: 600;
-  min-width: 110px;
-}
-.voice-bar .visualizer-wrap {
-  flex: 1;
-  height: 50px;
+.face-container {
   position: relative;
+  height: 100%;
+  background: #050505;                 /* the "display panel" */
+  border-left: 1px solid var(--border);
   overflow: hidden;
-  display: flex;
-  align-items: center;
 }
-.voice-bar #voiceVisualizer {
+.face-container #robotFace {
+  display: block;
   width: 100%;
   height: 100%;
-  display: block;
+}
+.face-container::after {                /* subtle glass/vignette over the LEDs */
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  box-shadow: inset 0 0 120px rgba(0, 0, 0, 0.75);
+}
+
+/* Narrow screens: stack camera over face instead of side by side */
+@media (max-width: 760px) {
+  .workspace { flex-direction: column; }
+  .face-container { border-left: none; border-top: 1px solid var(--border); }
 }
 
 /* ─────────── Cards ─────────── */

@@ -27,7 +27,7 @@ const els = {
   statusPill: $("statusPill"), statusText: $("statusText"),
   linkPill: $("linkPill"), linkText: $("linkText"),
   cameraFeed: $("cameraFeed"), cameraOverlay: $("cameraOverlay"), cameraIdle: $("cameraIdle"),
-  voiceVisualizer: $("voiceVisualizer"), speakingDot: $("speakingDot"),
+  robotFace: $("robotFace"), speakingDot: $("speakingDot"),
   simCanvas: $("simCanvas"),
   transcript: $("transcript"), textInput: $("textInput"), textSend: $("textSend"),
   taskList: $("taskList"), actionLog: $("actionLog"),
@@ -51,6 +51,20 @@ const state = {
   trail: [{ x: 0, y: 0 }],
   visitor: null,   // null | "unknown" | person name
   faceBox: null,   // normalized {x,y,w,h,label} for the camera overlay
+  speaking: false, // robot voice active (drives the mouth)
+  expression: "neutral", // model-set emotion; the LED face eases toward it
+};
+
+// LED-face animation state (eased each frame toward the target expression).
+const face = {
+  eyeOpen: 1,      // 0 (blink shut) .. 1 (open)
+  mouthOpen: 0,    // 0 (closed) .. 1 (wide) — lip-sync amplitude
+  curve: 0.5,      // mouth emotion: 1 smile .. 0 flat .. -1 frown (eased)
+  eyeCurve: 0,     // eyelid emotion: >0 happy arc, <0 sad/angry (eased)
+  eyeScale: 1,     // eye size: >1 surprised, <1 squint (eased)
+  blinkUntil: 0,   // timestamp we blink until
+  nextBlink: 0,    // timestamp of the next scheduled blink
+  gaze: 0,         // horizontal pupil/eye drift for "thinking"/"listening"
 };
 
 let ai = null;
@@ -321,6 +335,30 @@ async function executePeopleTool(name, args) {
 const PEOPLE_TOOLS = new Set(["remember_person", "remember_fact", "forget_person"]);
 
 // ----------------------------------------------------------
+// UI tools — drive the on-screen LED face (no robot/people side effects)
+// ----------------------------------------------------------
+const UI_TOOLS = new Set(["set_expression"]);
+const EXPRESSIONS = new Set([
+  "neutral", "happy", "excited", "curious",
+  "thinking", "surprised", "sad", "love", "sleepy",
+]);
+
+function executeUiTool(name, args) {
+  if (name === "set_expression") return setExpression(args.emotion);
+  return { status: "error", reason: `unknown ui tool ${name}` };
+}
+
+function setExpression(emotion) {
+  const e = String(emotion || "").toLowerCase();
+  if (!EXPRESSIONS.has(e)) {
+    return { status: "error", reason: `unknown emotion "${emotion}"` };
+  }
+  state.expression = e;
+  logAction(`expression → ${e}`);
+  return { status: "success", expression: e };
+}
+
+// ----------------------------------------------------------
 // Camera — native-fps preview + throttled model frames
 // ----------------------------------------------------------
 const frameCanvas = document.createElement("canvas");
@@ -346,6 +384,20 @@ function stopCamera() {
   els.cameraFeed.srcObject = null;
   els.cameraIdle.style.display = "";
   els.cameraIdle.textContent = "camera offline";
+}
+
+// Boot the camera + face detection at page load — no API key needed.
+// The Gemini session is started separately by powerOn() / connect().
+async function bootCamera() {
+  const ok = await startCamera();
+  setMedia(ok, ok ? "Camera ready" : "No camera");
+  if (!ok) return;
+  logAction("camera live — face detection starting…");
+  const faceOk = await faceEngine.init();
+  if (faceOk) {
+    faceEngine.start(els.cameraFeed);
+    logAction("face engine ready — watching for faces");
+  }
 }
 
 function startFrameUpload(gen) {
@@ -401,7 +453,10 @@ async function connect() {
 
   // media first — mic & camera in parallel
   player = new SpeakerPlayer({
-    onSpeaking: (active) => els.speakingDot.classList.toggle("active", active),
+    onSpeaking: (active) => {
+      state.speaking = active;
+      els.speakingDot?.classList.toggle("active", active);
+    },
   });
   await player.resume();
 
@@ -427,7 +482,8 @@ async function connect() {
     micOk = false;
     logAction(`mic unavailable — ${e.name || e} (text chat still works)`);
   }
-  const camOk = await startCamera();
+  // Camera is already running from bootCamera() at page load; just update the media pill.
+  const camOk = !!camStream;
   setMedia(micOk && camOk, micOk && camOk ? "Media ✓" : micOk ? "No camera" : camOk ? "No mic" : "No media");
   if (micOk) logAction(`microphone hot · ${mic.label()} · echo-cancelled (barge-in enabled)`);
 
@@ -486,9 +542,8 @@ async function connect() {
   if (camOk) {
     startFrameUpload(gen);
     logAction(`camera stream: native fps on screen · ${MODEL_FRAME_FPS} fps to the model`);
-    faceEngine.init().then((ok) => {
-      if (ok && gen === sessionGen) faceEngine.start(els.cameraFeed);
-    });
+    // Face engine already started at boot; just ensure it's running (no-op if already started).
+    if (faceEngine.ready && !faceEngine._timer) faceEngine.start(els.cameraFeed);
   }
 
   const knownNames = [];
@@ -514,7 +569,9 @@ function handleServerMessage(msg) {
       id: fc.id,
       name: fc.name,
       response: {
-        result: PEOPLE_TOOLS.has(fc.name)
+        result: UI_TOOLS.has(fc.name)
+          ? executeUiTool(fc.name, fc.args || {})
+          : PEOPLE_TOOLS.has(fc.name)
           ? await executePeopleTool(fc.name, fc.args || {})
           : robot.execute(fc.name, fc.args || {}),
       },
@@ -563,14 +620,12 @@ function maybeReconnect(reason) {
 
 function teardownMedia() {
   if (frameTimer) { clearInterval(frameTimer); frameTimer = null; }
-  faceEngine.stop();
-  state.visitor = null;
-  state.faceBox = null;
+  // Keep camera + face detection running after power-off so the LED face
+  // and face box stay live. Only stop mic + speaker (AI-session media).
   mic?.stop(); mic = null;
   player?.stop(); player = null;
-  stopCamera();
-  els.micMeterFill.style.width = "0%";
-  els.speakingDot.classList.remove("active");
+  state.speaking = false;
+  els.speakingDot?.classList.remove("active");
 }
 
 function powerOff() {
@@ -700,7 +755,7 @@ function tick() {
 
   drawWorld();
   drawOverlay();
-  drawVoiceWave();
+  drawRobotFace();
   renderHud();
   requestAnimationFrame(tick);
 }
@@ -809,7 +864,19 @@ function drawWorld() {
 }
 
 function drawOverlay() {
-  const W = els.cameraOverlay.width, H = els.cameraOverlay.height;
+  // Size the overlay canvas to match the video element's actual display pixels
+  // (DPR-aware), so the face box aligns perfectly with the video.
+  const videoEl = els.cameraFeed;
+  const rect = videoEl.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  const cssW = Math.round(rect.width);
+  const cssH = Math.round(rect.height);
+  if (els.cameraOverlay.width !== cssW * dpr || els.cameraOverlay.height !== cssH * dpr) {
+    els.cameraOverlay.width = cssW * dpr;
+    els.cameraOverlay.height = cssH * dpr;
+    octx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  const W = cssW, H = cssH;
   octx.clearRect(0, 0, W, H);
 
   // face recognition box + name badge
@@ -817,17 +884,34 @@ function drawOverlay() {
   if (fb) {
     const known = fb.label !== "unknown";
     const x = fb.x * W, y = fb.y * H, w = fb.w * W, h = fb.h * H;
+    // Glowing box: cyan for known, amber for unknown
+    octx.shadowColor = known ? "rgba(16,185,129,0.8)" : "rgba(245,158,11,0.8)";
+    octx.shadowBlur = 10;
     octx.strokeStyle = known ? "rgba(16,185,129,0.95)" : "rgba(245,158,11,0.95)";
-    octx.lineWidth = 2;
+    octx.lineWidth = 2.5;
     octx.strokeRect(x, y, w, h);
+    octx.shadowBlur = 0;
+    // Corner accent marks
+    const cs = Math.min(w, h) * 0.18;
+    octx.strokeStyle = known ? "#10b981" : "#f59e0b";
+    octx.lineWidth = 3;
+    [[x,y],[x+w,y],[x,y+h],[x+w,y+h]].forEach(([cx,cy], i) => {
+      const sx = i % 2 === 0 ? 1 : -1, sy = i < 2 ? 1 : -1;
+      octx.beginPath();
+      octx.moveTo(cx, cy + sy * cs); octx.lineTo(cx, cy); octx.lineTo(cx + sx * cs, cy);
+      octx.stroke();
+    });
+    // Name badge
     const label = known ? fb.label : "unknown";
-    octx.font = "600 12px system-ui, sans-serif";
+    octx.font = "600 13px system-ui, sans-serif";
     const tw = octx.measureText(label).width;
-    const by = Math.max(18, y);
+    const by = Math.max(22, y);
     octx.fillStyle = known ? "rgba(6,95,70,0.92)" : "rgba(120,53,15,0.92)";
-    octx.fillRect(x, by - 18, tw + 12, 18);
+    octx.beginPath();
+    octx.roundRect(x, by - 22, tw + 16, 22, 4);
+    octx.fill();
     octx.fillStyle = "#fff";
-    octx.fillText(label, x + 6, by - 5);
+    octx.fillText(label, x + 8, by - 6);
   }
 
   const lt = state.lookTarget;
@@ -851,86 +935,145 @@ function drawOverlay() {
 // boot
 // ----------------------------------------------------------
 setStatus("offline", "");
-setMedia(false, "Media off");
+setMedia(false, "Starting camera…");
 logAction(`display ready — ${MODEL} · voice ${VOICE_NAME} · press Power On`);
 if (!API_KEY) logAction("⚠ VITE_GEMINI_API_KEY missing — copy .env.example to .env and restart `npm run dev`");
 requestAnimationFrame(tick);
+// Auto-start camera + face detection without needing Power On.
+bootCamera();
 
 // ----------------------------------------------------------
-// Premium Fluid Sound Wave Visualizer
+// LED dot-matrix robot face
 // ----------------------------------------------------------
-function drawVoiceWave() {
-  const canvas = els.voiceVisualizer;
+// Per-expression target shape params. curve: mouth smile(+)/frown(-).
+// eyeCurve: happy arc(+)/sad arc(-). eyeScale: eye size. base: resting
+// mouth openness. gaze: horizontal eye drift.
+const EXPR_PARAMS = {
+  neutral:   { curve: 0.35, eyeCurve: 0.0,  eyeScale: 1.0,  base: 0.05, gaze: 0.0 },
+  happy:     { curve: 0.9,  eyeCurve: 0.8,  eyeScale: 1.0,  base: 0.08, gaze: 0.0 },
+  excited:   { curve: 1.0,  eyeCurve: 0.6,  eyeScale: 1.15, base: 0.12, gaze: 0.0 },
+  curious:   { curve: 0.45, eyeCurve: 0.2,  eyeScale: 1.1,  base: 0.06, gaze: 0.28 },
+  thinking:  { curve: 0.1,  eyeCurve: -0.1, eyeScale: 0.9,  base: 0.03, gaze: 0.36 },
+  surprised: { curve: 0.1,  eyeCurve: 0.0,  eyeScale: 1.45, base: 0.55, gaze: 0.0 },
+  sad:       { curve: -0.7, eyeCurve: -0.6, eyeScale: 0.95, base: 0.04, gaze: 0.0 },
+  love:      { curve: 0.85, eyeCurve: 0.7,  eyeScale: 1.05, base: 0.08, gaze: 0.0 },
+  sleepy:    { curve: 0.2,  eyeCurve: 0.3,  eyeScale: 0.55, base: 0.03, gaze: 0.0 },
+};
+
+const FACE_CYAN = "34, 231, 255";
+
+function drawRobotFace() {
+  const canvas = els.robotFace;
   if (!canvas) return;
-  const ctx = canvas.getContext("2d");
-  
-  // Set responsive pixel-perfect resolution matching layouts
   const rect = canvas.getBoundingClientRect();
-  const targetW = Math.round(rect.width);
-  const targetH = Math.round(rect.height);
-  if (canvas.width !== targetW || canvas.height !== targetH) {
-    canvas.width = targetW;
-    canvas.height = targetH;
+  const cssW = Math.round(rect.width), cssH = Math.round(rect.height);
+  if (cssW < 2 || cssH < 2) return;
+  const dpr = window.devicePixelRatio || 1;
+  if (canvas.width !== cssW * dpr || canvas.height !== cssH * dpr) {
+    canvas.width = cssW * dpr;
+    canvas.height = cssH * dpr;
   }
-  
-  const W = canvas.width;
-  const H = canvas.height;
-  ctx.clearRect(0, 0, W, H);
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-  // Check state to configure wave shape
-  const isSpeaking = els.speakingDot.classList.contains("active"); // bot speaking
-  const isMuted = state.muted;
-  
-  // Base targets for wave amplitude and speed
-  let targetAmp = 2; // idle baseline breathing hum
-  let targetSpeed = 0.04;
-  
-  if (isMuted || !state.powerOn) {
-    targetAmp = 0;
-    targetSpeed = 0;
-  } else if (isSpeaking) {
-    // Robot speaking wave: animated, medium-high amplitude
-    targetAmp = 12 + 6 * Math.sin(performance.now() / 150);
-    targetSpeed = 0.15;
-  } else if (currentVolume > 0.005) {
-    // User speaking wave: map directly to microphone volume
-    targetAmp = Math.min(25, 4 + currentVolume * 220);
-    targetSpeed = Math.min(0.25, 0.06 + currentVolume * 3);
+  const W = cssW, H = cssH;
+  ctx.fillStyle = "#050505";
+  ctx.fillRect(0, 0, W, H);
+
+  // ---- ease animated params toward the current expression's targets ----
+  const p = EXPR_PARAMS[state.expression] || EXPR_PARAMS.neutral;
+  const now = performance.now();
+  const asleep = !state.powerOn;
+  const listening = state.powerOn && !state.speaking && !state.muted && currentVolume > 0.02;
+
+  face.curve += (p.curve - face.curve) * 0.15;
+  face.eyeCurve += (p.eyeCurve - face.eyeCurve) * 0.15;
+  const eyeScaleT = (asleep ? 0.9 : p.eyeScale) * (listening ? 1.08 : 1);
+  face.eyeScale += (eyeScaleT - face.eyeScale) * 0.15;
+  face.gaze += (p.gaze - face.gaze) * 0.08;
+
+  // blink scheduling (skip random blinks while asleep — eyes stay low)
+  if (!asleep && now > face.nextBlink) {
+    face.blinkUntil = now + 110;
+    face.nextBlink = now + 2600 + Math.random() * 3600;
   }
+  const eyeOpenT = asleep ? 0.12 : (now < face.blinkUntil ? 0.06 : 1);
+  face.eyeOpen += (eyeOpenT - face.eyeOpen) * 0.35;
 
-  // Smooth transitions to prevent hard jumps
-  if (state.waveAmp === undefined) state.waveAmp = targetAmp;
-  state.waveAmp += (targetAmp - state.waveAmp) * 0.15;
-  
-  if (state.waveSpeed === undefined) state.waveSpeed = targetSpeed;
-  state.waveSpeed += (targetSpeed - state.waveSpeed) * 0.15;
+  // mouth openness: real lip-sync from output audio while speaking
+  const level = state.speaking && player ? player.getLevel() : 0;
+  const mouthT = asleep ? 0 : Math.max(p.base, level);
+  face.mouthOpen += (mouthT - face.mouthOpen) * 0.5;
 
-  wavePhase += state.waveSpeed;
+  // ---- geometry ----
+  const TAU = Math.PI * 2;
+  const u = Math.min(W, H);
+  const cx = W / 2, cy = H / 2;
+  const eyeDX = u * 0.2;
+  const eyeY = cy - u * 0.12;
+  const eyeRx = u * 0.115 * face.eyeScale;
+  const eyeRy = u * 0.125 * face.eyeScale * Math.max(0.08, face.eyeOpen);
+  const gazePx = face.gaze * u * 0.04;
+  const mouthY = cy + u * 0.16, mw = u * 0.24;
 
-  // Render 3 overlapping colored sine waves (Indigo, Green, Violet)
-  const waves = [
-    { freq: 0.015, amp: state.waveAmp * 1.0, speedOffset: 1.0, color: "rgba(79, 70, 229, 0.65)" },
-    { freq: 0.025, amp: state.waveAmp * 0.6, speedOffset: -1.3, color: "rgba(16, 185, 129, 0.55)" },
-    { freq: 0.010, amp: state.waveAmp * 0.4, speedOffset: 0.8, color: "rgba(124, 58, 237, 0.45)" },
-  ];
+  const eyeLit = (px, py, side) => {
+    const ecx = cx + side * eyeDX + gazePx;
+    const X = px - ecx, Y = py - eyeY;
+    if ((X / eyeRx) ** 2 + (Y / eyeRy) ** 2 > 1) return false;
+    // crescent: carve a shifted ellipse out to make happy(∩)/sad(∪) eyes
+    if (Math.abs(face.eyeCurve) > 0.05 && face.eyeOpen > 0.4) {
+      const off = face.eyeCurve * eyeRy * 1.1; // +down (keeps top ∩), -up (keeps bottom ∪)
+      if ((X / eyeRx) ** 2 + ((Y - off) / eyeRy) ** 2 <= 1) return false;
+    }
+    return true;
+  };
 
-  ctx.lineWidth = 2.5;
-  ctx.lineCap = "round";
+  const mouthLit = (px, py) => {
+    const X = px - cx;
+    if (Math.abs(X) > mw) return false;
+    const t = X / mw;
+    const yc = mouthY + face.curve * (u * 0.075) * (1 - t * t); // smile(+): corners up
+    const taper = Math.sqrt(Math.max(0, 1 - t * t));            // rounded ends
+    const half = (u * 0.017 + face.mouthOpen * u * 0.1) * (0.4 + 0.6 * taper);
+    return Math.abs(py - yc) <= half;
+  };
 
-  waves.forEach((w) => {
-    ctx.beginPath();
-    ctx.strokeStyle = w.color;
-    
-    for (let x = 0; x < W; x += 2) {
-      // Gaussian-like envelope (taper wave to 0 at the left & right borders of the canvas)
-      const envelope = Math.sin((x / W) * Math.PI);
-      const y = (H / 2) + Math.sin(x * w.freq + wavePhase * w.speedOffset) * w.amp * envelope;
-      if (x === 0) {
-        ctx.moveTo(x, y);
+  // ---- render the dot grid ----
+  // Build coordinate lists that are SYMMETRIC about the face center, so the two
+  // eyes get mirror-identical dot patterns (no lopsided eyes / stray dots).
+  const cell = Math.max(10, Math.round(u / 28));
+  const rDim = cell * 0.14, rLit = cell * 0.45; // fat dots ≈ touching → no gaps
+  const xs = [], ys = [];
+  for (let x = cx; x > -cell; x -= cell) xs.push(x);
+  for (let x = cx + cell; x < W + cell; x += cell) xs.push(x);
+  for (let y = cy; y > -cell; y -= cell) ys.push(y);
+  for (let y = cy + cell; y < H + cell; y += cell) ys.push(y);
+
+  // pass 1: dim "unlit" LEDs everywhere (the matrix texture)
+  const lit = [];
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = `rgba(${FACE_CYAN}, 0.05)`;
+  for (let yi = 0; yi < ys.length; yi++) {
+    const py = ys[yi];
+    for (let xi = 0; xi < xs.length; xi++) {
+      const px = xs[xi];
+      if (eyeLit(px, py, -1) || eyeLit(px, py, 1) || mouthLit(px, py)) {
+        lit.push(px, py);
       } else {
-        ctx.lineTo(x, y);
+        ctx.beginPath();
+        ctx.arc(px, py, rDim, 0, TAU);
+        ctx.fill();
       }
     }
-    ctx.stroke();
-  });
+  }
+  // pass 2: bright lit LEDs with a bloom
+  ctx.shadowColor = `rgba(${FACE_CYAN}, 0.9)`;
+  ctx.shadowBlur = cell * 0.75;
+  ctx.fillStyle = `rgba(${FACE_CYAN}, 0.98)`;
+  for (let i = 0; i < lit.length; i += 2) {
+    ctx.beginPath();
+    ctx.arc(lit[i], lit[i + 1], rLit, 0, TAU);
+    ctx.fill();
+  }
+  ctx.shadowBlur = 0;
 }

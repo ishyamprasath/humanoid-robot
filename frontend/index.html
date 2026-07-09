@@ -37,23 +37,21 @@
 
   <main class="workspace">
 
-    <!-- CAMERA CONTAINER (Full Screen / Wider) -->
+    <!-- LEFT: CAMERA (what the robot sees) -->
     <div class="full-cam-container">
       <video id="cameraFeed" autoplay playsinline muted></video>
       <canvas id="cameraOverlay" width="640" height="480"></canvas>
       <div class="camera-idle" id="cameraIdle">camera offline</div>
     </div>
 
-    <!-- VOICE BAR (Bottom Panel) -->
-    <div class="voice-bar">
-      <span class="speaking" id="speakingDot" title="Robot speaking">◉</span>
-      <div class="visualizer-wrap">
-        <canvas id="voiceVisualizer"></canvas>
-      </div>
+    <!-- RIGHT: ROBOT FACE (LED dot-matrix, emotes with the voice) -->
+    <div class="face-container">
+      <canvas id="robotFace"></canvas>
     </div>
 
     <!-- HIDDEN UTILITIES (kept in DOM to prevent breaking main.js orchestrator) -->
     <div class="hidden">
+      <span id="speakingDot"></span>
       <button id="muteBtn"></button>
       <button id="textSend"></button>
       <input id="textInput" />

@@ -70,10 +70,37 @@ export class SpeakerPlayer {
     this._ctx = new AudioContext({ latencyHint: "interactive" });
     this._nextTime = 0;
     this._sources = new Set();
+
+    // Analyser tap for real lip-sync: every buffer plays THROUGH this node on
+    // its way to the speakers, so getLevel() reflects the robot's actual voice.
+    this._analyser = this._ctx.createAnalyser();
+    this._analyser.fftSize = 256;
+    this._analyser.smoothingTimeConstant = 0.6;
+    this._analyser.connect(this._ctx.destination);
+    this._buf = new Uint8Array(this._analyser.fftSize);
+    this._level = 0;
   }
 
   async resume() {
     if (this._ctx.state === "suspended") await this._ctx.resume();
+  }
+
+  /**
+   * Current output loudness, 0..1, smoothed. ~0 when silent. Read once per
+   * animation frame to drive the robot mouth. Cheap: one time-domain read.
+   */
+  getLevel() {
+    this._analyser.getByteTimeDomainData(this._buf);
+    let sumSq = 0;
+    for (let i = 0; i < this._buf.length; i++) {
+      const v = (this._buf[i] - 128) / 128; // center at 0, range -1..1
+      sumSq += v * v;
+    }
+    const rms = Math.sqrt(sumSq / this._buf.length);
+    // Normalize (speech RMS is small) and clamp, then ease for a fluid mouth.
+    const target = Math.min(1, rms * 3.2);
+    this._level += (target - this._level) * 0.4;
+    return this._level;
   }
 
   /** Enqueue a PCM16 mono chunk (Uint8Array) for gapless playback. */
@@ -87,7 +114,7 @@ export class SpeakerPlayer {
 
     const src = this._ctx.createBufferSource();
     src.buffer = buf;
-    src.connect(this._ctx.destination);
+    src.connect(this._analyser);
     const t = Math.max(this._ctx.currentTime + 0.038, this._nextTime);
     src.start(t);
     this._nextTime = t + buf.duration;

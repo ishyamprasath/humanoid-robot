@@ -152,6 +152,27 @@ export function buildTools() {
             required: ["name"],
           },
         },
+        {
+          name: "set_expression",
+          description:
+            "Set your on-screen LED face to match your current emotion. Call it whenever your " +
+            "mood shifts — happy when greeting, curious when asking a question, surprised at " +
+            "something unexpected, thinking while working a problem, sad for bad news. Your " +
+            "mouth already lip-syncs on its own; this sets the emotion of your eyes and smile.",
+          parameters: {
+            type: "OBJECT",
+            properties: {
+              emotion: {
+                type: "STRING",
+                enum: [
+                  "neutral", "happy", "excited", "curious",
+                  "thinking", "surprised", "sad", "love", "sleepy",
+                ],
+              },
+            },
+            required: ["emotion"],
+          },
+        },
       ],
     },
   ];

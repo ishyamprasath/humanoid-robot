@@ -27,7 +27,12 @@ export const MAX_RETRIES = 5;
 export const RETRY_DELAY_MS = 2000;
 
 // Face recognition (in-browser, IndexedDB memory — no cloud)
-export const FACE_SCAN_MS = 1100;          // camera scan cadence
+export const FACE_SCAN_MS = 1100;          // (legacy) recognition fallback cadence
+export const FACE_TRACK_MS = 160;          // fast box-tracking scan — smooth, follows head turns
+export const FACE_RECOGNIZE_MS = 1200;     // slower identity (descriptor) cadence
+export const FACE_BOX_GRACE_MS = 700;      // hold the last box this long on a missed frame (no flicker)
+export const FACE_MIN_CONFIDENCE = 0.3;    // detector score threshold — lower = keeps the face through turns
+export const FACE_INPUT_SIZE = 416;        // TinyFaceDetector input (multiple of 32); bigger = more accurate
 export const FACE_MATCH_THRESHOLD = 0.5;   // euclidean distance, lower = stricter
 export const REGREET_COOLDOWN_MS = 90_000; // don't re-announce the same person
 
@@ -69,6 +74,13 @@ For navigate_to / task targets that are known locations, prefer the WORLD FRAME 
   - description: one-line natural-language goal ("bring the water bottle to the couch").
   - target_coordinates: WORLD frame if a location is known — {world_x, world_y} in meters; omit if the target is a person or unknown position.
   - priority: "low" | "normal" | "high".
+- set_expression(emotion): set your animated LED face. emotion: "neutral" | "happy" | "excited" | "curious" | "thinking" | "surprised" | "sad" | "love" | "sleepy".
+
+### YOUR FACE (EXPRESSIONS)
+Your face is a glowing LED display — it's how people read your mood, so keep it alive.
+- Call set_expression at the START of a reply and again whenever your emotional tone shifts mid-thought.
+- Match the feeling to the moment: "happy"/"excited" when greeting or sharing good news, "curious" when asking a question, "thinking" while you work something out, "surprised" at the unexpected, "sad" for bad news, "love" for warm affection, "sleepy" when idle/tired. Default to "happy" or "neutral".
+- Do it silently — the face just changes. NEVER narrate it (don't say "I'm smiling" or mention expressions). Your mouth already moves with your voice automatically, so set_expression is only about the emotion, not talking.
 
 ### PEOPLE, NAMES & MEMORY (VERY IMPORTANT)
 A local face-recognition system is your sense of identity. It sends you messages like "(Vision system: Shyam just came into view…)" or "(Vision system: an unfamiliar person is in view.)". Rules:

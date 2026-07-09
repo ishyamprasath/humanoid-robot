@@ -9,7 +9,10 @@
 // ============================================================
 
 import * as faceapi from "@vladmandic/face-api";
-import { FACE_MATCH_THRESHOLD, FACE_SCAN_MS } from "./config.js";
+import {
+  FACE_MATCH_THRESHOLD, FACE_TRACK_MS, FACE_RECOGNIZE_MS,
+  FACE_BOX_GRACE_MS, FACE_MIN_CONFIDENCE, FACE_INPUT_SIZE,
+} from "./config.js";
 
 const MODEL_URL = "/models/faceapi";
 const ENRICH_DISTANCE = 0.35; // very confident match -> add descriptor sample
@@ -28,9 +31,16 @@ export class FaceEngine {
     this._lastDescriptor = null; // latest descriptor seen (for remember_person)
     this._matcher = null;
     this._timer = null;
-    this._busy = false;
-    this._lastScanTime = 0;
-    this._detectorOptions = new faceapi.TinyFaceDetectorOptions();
+    this._busy = false;          // guards the fast box-tracking scan
+    this._recognizing = false;   // guards the slower recognition pass
+    this._label = "unknown";     // latest identity, reused between recognitions
+    this._lastSeen = 0;          // last time a face was detected (for grace)
+    this._lastRecognizeTime = 0; // last identity pass
+    // Lower score threshold + fixed input size = holds the face through head turns.
+    this._detectorOptions = new faceapi.TinyFaceDetectorOptions({
+      inputSize: FACE_INPUT_SIZE,
+      scoreThreshold: FACE_MIN_CONFIDENCE,
+    });
   }
 
   async init() {
@@ -69,14 +79,16 @@ export class FaceEngine {
   start(videoEl) {
     if (!this.ready || this._timer) return;
     this._video = videoEl;
-    this._timer = setInterval(() => this._scan(), FACE_SCAN_MS);
+    this._timer = setInterval(() => this._scan(), FACE_TRACK_MS);
   }
 
   stop() {
     if (this._timer) { clearInterval(this._timer); this._timer = null; }
     this._setCurrent(null);
+    this._label = "unknown";
     this._lastDescriptor = null;
-    this._lastScanTime = 0;
+    this._lastSeen = 0;
+    this._lastRecognizeTime = 0;
     this.onFaceBox(null);
   }
 
@@ -85,31 +97,57 @@ export class FaceEngine {
     return this._lastDescriptor;
   }
 
+  // Fast path: detection-only every FACE_TRACK_MS for a smooth box that
+  // follows head turns. A single miss does NOT clear the box — we hold the
+  // last one for FACE_BOX_GRACE_MS so slight turns don't make it vanish.
   async _scan() {
     const video = this._video;
     if (this._busy || !video || !video.videoWidth) return;
 
-    // Dynamic throttling: if we already recognize someone, scan less frequently to save CPU/responsiveness.
-    const now = performance.now();
-    const currentInterval = (this.current && this.current !== "unknown") ? 3000 : FACE_SCAN_MS;
-    if (this._lastScanTime && (now - this._lastScanTime < currentInterval)) {
-      return;
-    }
-    this._lastScanTime = now;
-
     this._busy = true;
+    try {
+      const det = await faceapi.detectSingleFace(video, this._detectorOptions);
+      const now = performance.now();
+
+      if (det) {
+        this._lastSeen = now;
+        const b = det.box;
+        this.onFaceBox({
+          x: b.x / video.videoWidth,
+          y: b.y / video.videoHeight,
+          w: b.width / video.videoWidth,
+          h: b.height / video.videoHeight,
+          label: this._label,
+        });
+        // Identity is expensive (landmarks + 128-d descriptor) — run it on a
+        // slower cadence, off the fast box loop.
+        if (now - this._lastRecognizeTime > FACE_RECOGNIZE_MS) {
+          this._lastRecognizeTime = now;
+          this._recognize(video);   // fire-and-forget, self-guarded
+        }
+      } else if (now - this._lastSeen > FACE_BOX_GRACE_MS) {
+        this._label = "unknown";
+        this._lastDescriptor = null;
+        this.onFaceBox(null);
+        this._debounce(null);
+      }
+    } catch (e) {
+      this.onLog(`face scan error: ${e?.message || e}`);
+    } finally {
+      this._busy = false;
+    }
+  }
+
+  // Slow path: who is this? Runs the full landmark+descriptor pipeline.
+  async _recognize(video) {
+    if (this._recognizing || !video || !video.videoWidth) return;
+    this._recognizing = true;
     try {
       const det = await faceapi
         .detectSingleFace(video, this._detectorOptions)
         .withFaceLandmarks()
         .withFaceDescriptor();
-
-      if (!det) {
-        this._lastDescriptor = null;
-        this.onFaceBox(null);
-        this._debounce(null);
-        return;
-      }
+      if (!det) return;
 
       this._lastDescriptor = det.descriptor;
       let label = "unknown";
@@ -121,16 +159,7 @@ export class FaceEngine {
           distance = best.distance;
         }
       }
-
-      // normalized box for the overlay canvas
-      const b = det.detection.box;
-      this.onFaceBox({
-        x: b.x / video.videoWidth,
-        y: b.y / video.videoHeight,
-        w: b.width / video.videoWidth,
-        h: b.height / video.videoHeight,
-        label,
-      });
+      this._label = label;
 
       // rock-solid match on a known person -> enrich their samples
       if (label !== "unknown" && distance < ENRICH_DISTANCE) {
@@ -140,9 +169,9 @@ export class FaceEngine {
 
       this._debounce(label);
     } catch (e) {
-      this.onLog(`face scan error: ${e?.message || e}`);
+      this.onLog(`face recognize error: ${e?.message || e}`);
     } finally {
-      this._busy = false;
+      this._recognizing = false;
     }
   }
 
