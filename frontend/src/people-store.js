@@ -121,4 +121,9 @@ export class PeopleStore {
     await tx(db, "readwrite", (s) => s.delete(person.id));
     return true;
   }
+
+  async clearAll() {
+    const db = await this._ensure();
+    await tx(db, "readwrite", (s) => s.clear());
+  }
 }

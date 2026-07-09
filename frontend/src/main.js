@@ -27,7 +27,7 @@ const els = {
   statusPill: $("statusPill"), statusText: $("statusText"),
   linkPill: $("linkPill"), linkText: $("linkText"),
   cameraFeed: $("cameraFeed"), cameraOverlay: $("cameraOverlay"), cameraIdle: $("cameraIdle"),
-  micMeterFill: $("micMeterFill"), speakingDot: $("speakingDot"),
+  voiceVisualizer: $("voiceVisualizer"), speakingDot: $("speakingDot"),
   simCanvas: $("simCanvas"),
   transcript: $("transcript"), textInput: $("textInput"), textSend: $("textSend"),
   taskList: $("taskList"), actionLog: $("actionLog"),
@@ -62,6 +62,30 @@ let camStream = null;
 let frameTimer = null;
 let retries = 0;
 let userLine = null, botLine = null;
+
+let currentSessionId = null;
+const lastTaskStatuses = new Map();
+
+// Premium Voice Visualizer State
+let currentVolume = 0;
+let wavePhase = 0;
+
+async function postLog(type, content) {
+  if (!currentSessionId) return;
+  try {
+    await fetch(`/api/log/${type}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sessionId: currentSessionId,
+        timestamp: Date.now(),
+        content,
+      }),
+    });
+  } catch (e) {
+    console.error("Failed to post log:", e);
+  }
+}
 
 // ----------------------------------------------------------
 // base64 helpers
@@ -139,6 +163,20 @@ const robot = new Robot({
   onAction: (name, args, result) => {
     const ok = result.status === "success";
     logAction(`${ok ? "⚡" : "✋"} ${name} ${ok ? JSON.stringify(args) : "REJECTED: " + (result.reason || "")}`);
+    
+    // Log tool action to server
+    postLog("action", {
+      type: ok ? "call" : "error",
+      message: `${name}(${JSON.stringify(args)}) -> ${ok ? "success" : "rejected: " + (result.reason || "")}`
+    });
+
+    // Log task event to server if this is execute_task and success
+    if (name === "execute_task" && ok) {
+      postLog("task", {
+        event: "created",
+        message: `Task ${result.task_id} (${args.task_type}): "${args.description}" - priority: ${args.priority || "normal"}`
+      });
+    }
   },
   onState: (snap) => {
     const p = snap.pose;
@@ -152,6 +190,20 @@ const robot = new Robot({
     }
     renderTasks();
     renderHud();
+
+    // Check for task status changes
+    for (const t of snap.tasks) {
+      const prev = lastTaskStatuses.get(t.id);
+      if (prev !== t.status) {
+        lastTaskStatuses.set(t.id, t.status);
+        if (prev) { // only log changes, not initial state
+          postLog("task", {
+            event: "status_change",
+            message: `Task ${t.id} (${t.type}) status changed from "${prev}" to "${t.status}"`
+          });
+        }
+      }
+    }
   },
 });
 
@@ -332,6 +384,13 @@ async function powerOn() {
     logAction("VITE_GEMINI_API_KEY missing in frontend/.env");
     return;
   }
+
+  // Initialize new logging session ID
+  const pad = (n) => String(n).padStart(2, "0");
+  const d = new Date();
+  currentSessionId = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+  lastTaskStatuses.clear();
+
   retries = 0;
   await connect();
 }
@@ -356,7 +415,7 @@ async function connect() {
       } catch {}
     },
     onLevel: (rms) => {
-      els.micMeterFill.style.width = `${Math.min(100, rms * 300)}%`;
+      currentVolume = rms;
     },
   });
 
@@ -419,6 +478,11 @@ async function connect() {
   }
 
   if (gen !== sessionGen) return; // powered off while connecting
+
+  // Wipe all saved face embeddings and memories to start completely fresh from scratch
+  await peopleStore.clearAll();
+  await faceEngine.refreshMatcher();
+
   if (camOk) {
     startFrameUpload(gen);
     logAction(`camera stream: native fps on screen · ${MODEL_FRAME_FPS} fps to the model`);
@@ -427,7 +491,7 @@ async function connect() {
     });
   }
 
-  const knownNames = (await peopleStore.loadAll()).map((p) => p.name);
+  const knownNames = [];
   const knownTxt = knownNames.length
     ? `People you already know by face: ${knownNames.join(", ")}.`
     : "You don't know anyone by face yet.";
@@ -466,8 +530,18 @@ function handleServerMessage(msg) {
     if (sc.interrupted) {
       player?.interrupt();
       logAction("interrupted — user barge-in");
+      postLog("action", { type: "interrupt", message: "User barge-in interrupted playback" });
     }
-    if (sc.turnComplete) { userLine = null; botLine = null; }
+    if (sc.turnComplete) {
+      if (userLine && userLine.textContent) {
+        postLog("conversation", { role: "user", text: userLine.textContent });
+      }
+      if (botLine && botLine.textContent) {
+        postLog("conversation", { role: "robot", text: botLine.textContent });
+      }
+      userLine = null;
+      botLine = null;
+    }
   }
 }
 
@@ -504,6 +578,7 @@ function powerOff() {
   try { session?.close(); } catch {}
   session = null;
   teardownMedia();
+  currentSessionId = null;
   setStatus("offline", "");
   setMedia(false, "Media off");
   logAction("cognitive core shut down");
@@ -526,6 +601,7 @@ function sendText() {
   if (!text) return;
   els.textInput.value = "";
   transcriptDelta("user", text);
+  postLog("conversation", { role: "user", text });
   userLine = null;
   if (session) {
     session.sendClientContent({
@@ -624,6 +700,7 @@ function tick() {
 
   drawWorld();
   drawOverlay();
+  drawVoiceWave();
   renderHud();
   requestAnimationFrame(tick);
 }
@@ -778,3 +855,82 @@ setMedia(false, "Media off");
 logAction(`display ready — ${MODEL} · voice ${VOICE_NAME} · press Power On`);
 if (!API_KEY) logAction("⚠ VITE_GEMINI_API_KEY missing — copy .env.example to .env and restart `npm run dev`");
 requestAnimationFrame(tick);
+
+// ----------------------------------------------------------
+// Premium Fluid Sound Wave Visualizer
+// ----------------------------------------------------------
+function drawVoiceWave() {
+  const canvas = els.voiceVisualizer;
+  if (!canvas) return;
+  const ctx = canvas.getContext("2d");
+  
+  // Set responsive pixel-perfect resolution matching layouts
+  const rect = canvas.getBoundingClientRect();
+  const targetW = Math.round(rect.width);
+  const targetH = Math.round(rect.height);
+  if (canvas.width !== targetW || canvas.height !== targetH) {
+    canvas.width = targetW;
+    canvas.height = targetH;
+  }
+  
+  const W = canvas.width;
+  const H = canvas.height;
+  ctx.clearRect(0, 0, W, H);
+
+  // Check state to configure wave shape
+  const isSpeaking = els.speakingDot.classList.contains("active"); // bot speaking
+  const isMuted = state.muted;
+  
+  // Base targets for wave amplitude and speed
+  let targetAmp = 2; // idle baseline breathing hum
+  let targetSpeed = 0.04;
+  
+  if (isMuted || !state.powerOn) {
+    targetAmp = 0;
+    targetSpeed = 0;
+  } else if (isSpeaking) {
+    // Robot speaking wave: animated, medium-high amplitude
+    targetAmp = 12 + 6 * Math.sin(performance.now() / 150);
+    targetSpeed = 0.15;
+  } else if (currentVolume > 0.005) {
+    // User speaking wave: map directly to microphone volume
+    targetAmp = Math.min(25, 4 + currentVolume * 220);
+    targetSpeed = Math.min(0.25, 0.06 + currentVolume * 3);
+  }
+
+  // Smooth transitions to prevent hard jumps
+  if (state.waveAmp === undefined) state.waveAmp = targetAmp;
+  state.waveAmp += (targetAmp - state.waveAmp) * 0.15;
+  
+  if (state.waveSpeed === undefined) state.waveSpeed = targetSpeed;
+  state.waveSpeed += (targetSpeed - state.waveSpeed) * 0.15;
+
+  wavePhase += state.waveSpeed;
+
+  // Render 3 overlapping colored sine waves (Indigo, Green, Violet)
+  const waves = [
+    { freq: 0.015, amp: state.waveAmp * 1.0, speedOffset: 1.0, color: "rgba(79, 70, 229, 0.65)" },
+    { freq: 0.025, amp: state.waveAmp * 0.6, speedOffset: -1.3, color: "rgba(16, 185, 129, 0.55)" },
+    { freq: 0.010, amp: state.waveAmp * 0.4, speedOffset: 0.8, color: "rgba(124, 58, 237, 0.45)" },
+  ];
+
+  ctx.lineWidth = 2.5;
+  ctx.lineCap = "round";
+
+  waves.forEach((w) => {
+    ctx.beginPath();
+    ctx.strokeStyle = w.color;
+    
+    for (let x = 0; x < W; x += 2) {
+      // Gaussian-like envelope (taper wave to 0 at the left & right borders of the canvas)
+      const envelope = Math.sin((x / W) * Math.PI);
+      const y = (H / 2) + Math.sin(x * w.freq + wavePhase * w.speedOffset) * w.amp * envelope;
+      if (x === 0) {
+        ctx.moveTo(x, y);
+      } else {
+        ctx.lineTo(x, y);
+      }
+    }
+    ctx.stroke();
+  });
+}

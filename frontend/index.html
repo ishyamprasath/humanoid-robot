@@ -22,7 +22,6 @@
       </div>
       <div class="brand-text">
         <div class="brand-name">Robot</div>
-        <div class="brand-sub">Cognitive Core · Gemini Live · browser-native, zero backend</div>
       </div>
     </div>
     <div class="topbar-actions">
@@ -32,125 +31,44 @@
       <div class="status-pill" id="linkPill" data-state="error" title="Mic + camera">
         <span class="dot"></span><span id="linkText">Media off</span>
       </div>
-      <button id="muteBtn"  class="btn ghost">Mute</button>
       <button id="powerBtn" class="btn primary">Power On</button>
     </div>
   </header>
 
   <main class="workspace">
 
-    <!-- LEFT: what the robot sees + coordinates -->
-    <aside class="col left">
-      <section class="card">
-        <div class="card-head">
-          <div class="card-title">Robot Vision</div>
-          <div class="card-sub">live camera · native fps · direct to Gemini</div>
-        </div>
-        <div class="camera-wrap">
-          <video id="cameraFeed" autoplay playsinline muted></video>
-          <canvas id="cameraOverlay" width="640" height="480"></canvas>
-          <div class="camera-idle" id="cameraIdle">camera offline</div>
-        </div>
-        <div class="mic-row">
-          <span class="mic-label">Mic</span>
-          <div class="mic-meter"><div id="micMeterFill"></div></div>
-          <span class="speaking" id="speakingDot" title="Robot speaking">◉</span>
-        </div>
-      </section>
+    <!-- CAMERA CONTAINER (Full Screen / Wider) -->
+    <div class="full-cam-container">
+      <video id="cameraFeed" autoplay playsinline muted></video>
+      <canvas id="cameraOverlay" width="640" height="480"></canvas>
+      <div class="camera-idle" id="cameraIdle">camera offline</div>
+    </div>
 
-      <section class="card">
-        <div class="card-head">
-          <div class="card-title">Coordinates</div>
-          <div class="card-sub">world &amp; camera frames</div>
-        </div>
-        <div class="coord-block">
-          <div class="coord-row">
-            <span class="coord-label">Robot · world</span>
-            <span class="coord-value mono" id="coordWorld">+0.00 , +0.00 m</span>
-          </div>
-          <div class="coord-row">
-            <span class="coord-label">Heading</span>
-            <span class="coord-value mono" id="coordHeading">90° ↑</span>
-          </div>
-          <div class="coord-divider"></div>
-          <div class="coord-row">
-            <span class="coord-label">Target · camera</span>
-            <span class="coord-value mono" id="coordCam">—</span>
-          </div>
-          <div class="coord-row">
-            <span class="coord-label">Target · world</span>
-            <span class="coord-value mono" id="coordWorldTarget">—</span>
-          </div>
-        </div>
-        <div class="metrics">
-          <div class="metric">
-            <span class="metric-label">Gripper</span>
-            <span class="metric-value ok" id="statGripper">OPEN</span>
-          </div>
-          <div class="metric">
-            <span class="metric-label">Visitor</span>
-            <span class="metric-value" id="statVisitor">—</span>
-          </div>
-          <div class="metric wide">
-            <span class="metric-label">Current task</span>
-            <span class="metric-value" id="statCurrentTask">idle</span>
-          </div>
-        </div>
-      </section>
-    </aside>
-
-    <!-- CENTER: world map -->
-    <section class="col center">
-      <div class="card hero">
-        <div class="card-head">
-          <div>
-            <div class="card-title">Physical World</div>
-            <div class="card-sub">4 m × 4 m room · origin (0,0) at center · +x east · +y north</div>
-          </div>
-          <div class="legend">
-            <span><span class="legend-dot dot-robot"></span>Robot</span>
-            <span><span class="legend-dot dot-look"></span>Look target</span>
-            <span><span class="legend-dot dot-task"></span>Task target</span>
-          </div>
-        </div>
-        <div class="canvas-wrap">
-          <canvas id="simCanvas" width="620" height="620"></canvas>
-        </div>
+    <!-- VOICE BAR (Bottom Panel) -->
+    <div class="voice-bar">
+      <span class="speaking" id="speakingDot" title="Robot speaking">◉</span>
+      <div class="visualizer-wrap">
+        <canvas id="voiceVisualizer"></canvas>
       </div>
-    </section>
+    </div>
 
-    <!-- RIGHT: conversation + tasks + log -->
-    <aside class="col right">
-      <section class="card">
-        <div class="card-head">
-          <div class="card-title">Conversation</div>
-          <div class="card-sub">live transcript · you &amp; the robot</div>
-        </div>
-        <div class="log clean" id="transcript"></div>
-        <div class="chat-row">
-          <input id="textInput" type="text" placeholder="Type instead of talking…" />
-          <button id="textSend" class="btn primary compact">Send</button>
-        </div>
-      </section>
-
-      <section class="card">
-        <div class="card-head">
-          <div class="card-title">Task Queue</div>
-          <div class="card-sub">real objectives · not gestures</div>
-        </div>
-        <div class="task-list" id="taskList">
-          <div class="empty">No tasks yet. Ask the robot to do something.</div>
-        </div>
-      </section>
-
-      <section class="card">
-        <div class="card-head">
-          <div class="card-title">Action Log</div>
-          <div class="card-sub">tool calls · session events</div>
-        </div>
-        <div class="log mono" id="actionLog"></div>
-      </section>
-    </aside>
+    <!-- HIDDEN UTILITIES (kept in DOM to prevent breaking main.js orchestrator) -->
+    <div class="hidden">
+      <button id="muteBtn"></button>
+      <button id="textSend"></button>
+      <input id="textInput" />
+      <div id="transcript"></div>
+      <div id="taskList"></div>
+      <div id="actionLog"></div>
+      <canvas id="simCanvas" width="620" height="620"></canvas>
+      <span id="coordWorld"></span>
+      <span id="coordHeading"></span>
+      <span id="coordCam"></span>
+      <span id="coordWorldTarget"></span>
+      <span id="statGripper"></span>
+      <span id="statCurrentTask"></span>
+      <span id="statVisitor"></span>
+    </div>
 
   </main>
 

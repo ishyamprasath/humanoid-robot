@@ -31,3 +31,6 @@ nexabot/.vendor/
 
 # faceapi models (generated on postinstall)
 frontend/public/models/
+
+# frontend build
+frontend/dist/
