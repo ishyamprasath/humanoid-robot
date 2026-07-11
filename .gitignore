@@ -35,6 +35,4 @@ frontend/public/models/
 # frontend build
 frontend/dist/
 conv-log
-backend/.err*
 actions-log
-backend/runtime.err
