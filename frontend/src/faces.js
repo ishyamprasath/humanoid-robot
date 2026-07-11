@@ -14,7 +14,7 @@ import {
   FACE_BOX_GRACE_MS, FACE_MIN_CONFIDENCE, FACE_INPUT_SIZE,
 } from "./config.js";
 
-const MODEL_URL = "/models/faceapi";
+const MODEL_URL = new URL("../models/faceapi/", import.meta.url).href;
 const ENRICH_DISTANCE = 0.35; // very confident match -> add descriptor sample
 
 export class FaceEngine {

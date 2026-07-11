@@ -6,7 +6,9 @@
   "description": "Robot cognitive core — browser-native Gemini Live client (no backend)",
   "scripts": {
     "dev": "vite",
+    "dev:electron": "concurrently \"npm run dev\" \"wait-on http://127.0.0.1:5173 && electron .\"",
     "build": "vite build",
+    "build:electron": "npm run build && electron-builder",
     "preview": "vite preview",
     "postinstall": "node scripts/copy-models.mjs"
   },
@@ -15,7 +17,37 @@
     "@vladmandic/face-api": "^1.7.15"
   },
   "devDependencies": {
-    "vite": "^7.1.3"
+    "concurrently": "^9.1.1",
+    "electron": "^37.2.0",
+    "electron-builder": "^26.0.0",
+    "vite": "^7.1.3",
+    "wait-on": "^9.0.10"
+  },
+  "main": "electron/main.cjs",
+  "build": {
+    "appId": "com.nexabot.desktop",
+    "productName": "NexaBot",
+    "directories": {
+      "output": "dist-electron"
+    },
+    "files": [
+      "dist/**",
+      "electron/**",
+      "public/**",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "electron/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
   },
   "allowScripts": {
     "@google/genai@1.52.0": true,

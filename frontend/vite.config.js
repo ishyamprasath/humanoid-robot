@@ -67,6 +67,7 @@ function loggerPlugin() {
 }
 
 export default defineConfig({
+  base: "./",
   server: {
     port: Number(process.env.PORT) || 5173,
     host: true,

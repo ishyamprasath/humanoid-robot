@@ -35,6 +35,20 @@ frontend/public/models/
 # frontend build
 frontend/dist/
 conv-log
-backend/.err*
 actions-log
-backend/runtime.err
+
+# Electron build output
+frontend/dist-electron/
+frontend/release/
+frontend/out/
+
+# Electron packaging artifacts
+*.blockmap
+*.appx
+*.msi
+*.deb
+*.rpm
+*.dmg
+*.AppImage
+# Runtime logs
+*.err
