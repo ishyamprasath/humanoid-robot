@@ -970,8 +970,7 @@ bootCamera();
 // Per-expression target shape params.
 const EXPR_PARAMS = {
   neutral:     { curve: 0.35, eyeCurve: 0.0,  eyeScale: 1.0,  base: 0.05, gazeX: 0.0,  gazeY: 0.0,  browH: 0.0, browA: 0.0, tilt: 0.0, aMouth: 0.0, aBrowH: 0.0, aEyeScale: 0.0, jitter: 1.0, intensity: 0.6, r: 52, g: 222, b: 244, browAlpha: 0.0 },
-  happy:       { curve: 0.9,  eyeCurve: 0.8,  eyeScale: 1.0,  base: 0.08, gazeX: 0.0,  gazeY: 0.0,  browH: 0.0, browA: 0.0, tilt: 0.0, aMouth: 0.0, aBrowH: 0.0, aEyeScale: 0.0, jitter: 1.2, intensity: 0.8, r: 249, g: 209, b: 78, browAlpha: 0.0 },
-  excited:     { curve: 1.0,  eyeCurve: 0.6,  eyeScale: 1.15, base: 0.12, gazeX: 0.0,  gazeY: 0.0,  browH: 0.0, browA: 0.0, tilt: 0.0, aMouth: 0.0, aBrowH: 0.0, aEyeScale: 0.0, jitter: 1.5, intensity: 1.0, r: 253, g: 167, b: 68, browAlpha: 0.0 },
+  happy:       { curve: 1.0,  eyeCurve: 0.6,  eyeScale: 1.15, base: 0.12, gazeX: 0.0,  gazeY: 0.0,  browH: 0.0, browA: 0.0, tilt: 0.0, aMouth: 0.0, aBrowH: 0.0, aEyeScale: 0.0, jitter: 1.5, intensity: 1.0, r: 253, g: 167, b: 68, browAlpha: 0.0 },
   curious:     { curve: 0.45, eyeCurve: 0.2,  eyeScale: 1.1,  base: 0.06, gazeX: 0.28, gazeY: 0.1,  browH: 0.2, browA: 0.0, tilt: 0.1, aMouth: 0.0, aBrowH: 0.2, aEyeScale: 0.0, jitter: 1.1, intensity: 0.7, r: 87, g: 219, b: 210, browAlpha: 1.0 },
   thinking:    { curve: 0.1,  eyeCurve: -0.1, eyeScale: 0.9,  base: 0.03, gazeX: 0.36, gazeY: -0.2, browH: -0.1, browA: 0.1, tilt: -0.05, aMouth: 0.0, aBrowH: 0.0, aEyeScale: 0.0, jitter: 0.8, intensity: 0.5, r: 43, g: 212, b: 238, browAlpha: 0.0 },
   surprised:   { curve: 0.1,  eyeCurve: 0.0,  eyeScale: 1.45, base: 0.55, gazeX: 0.0,  gazeY: 0.2,  browH: 0.5, browA: 0.1, tilt: 0.0, aMouth: 0.0, aBrowH: 0.0, aEyeScale: 0.0, jitter: 1.4, intensity: 1.0, r: 223, g: 210, b: 144, browAlpha: 1.0 },
@@ -983,12 +982,6 @@ const EXPR_PARAMS = {
   cheeky:      { curve: 0.6,  eyeCurve: 0.4,  eyeScale: 0.95, base: 0.05, gazeX: 0.1,  gazeY: 0.0,  browH: 0.0, browA: 0.0, tilt: -0.1, aMouth: 0.4, aBrowH: 0.3, aEyeScale: -0.1, jitter: 1.1, intensity: 0.8, r: 234, g: 197, b: 87, browAlpha: 1.0 },
   bored:       { curve: 0.1,  eyeCurve: 0.0,  eyeScale: 0.75, base: 0.0,  gazeX: 0.0,  gazeY: 0.0,  browH: 0.0, browA: 0.0, tilt: 0.0, aMouth: 0.0, aBrowH: 0.0, aEyeScale: 0.0, jitter: 0.2, intensity: 0.3, r: 55, g: 158, b: 190, browAlpha: 0.0 },
   scared:      { curve: -0.3, eyeCurve: -0.1, eyeScale: 1.3,  base: 0.2,  gazeX: 0.0,  gazeY: -0.1, browH: 0.4, browA: 0.2, tilt: 0.0, aMouth: 0.0, aBrowH: 0.0, aEyeScale: 0.0, jitter: 3.0, intensity: 1.0, r: 53, g: 143, b: 233, browAlpha: 1.0 },
-  sassy:       { curve: 0.4,  eyeCurve: 0.2,  eyeScale: 0.9,  base: 0.05, gazeX: -0.2, gazeY: 0.1,  browH: 0.0, browA: 0.0, tilt: 0.2, aMouth: -0.3, aBrowH: -0.3, aEyeScale: -0.05, jitter: 1.0, intensity: 0.7, r: 234, g: 163, b: 83, browAlpha: 1.0 },
-  proud:       { curve: 0.7,  eyeCurve: 0.5,  eyeScale: 1.05, base: 0.06, gazeX: 0.0,  gazeY: 0.1,  browH: 0.2, browA: 0.1, tilt: -0.1, aMouth: 0.0, aBrowH: 0.0, aEyeScale: 0.0, jitter: 1.1, intensity: 0.9, r: 238, g: 181, b: 47, browAlpha: 1.0 },
-  embarrassed: { curve: -0.1, eyeCurve: 0.2,  eyeScale: 0.85, base: 0.04, gazeX: 0.3,  gazeY: -0.2, browH: 0.1, browA: 0.2, tilt: 0.1, aMouth: 0.1, aBrowH: 0.0, aEyeScale: 0.0, jitter: 1.3, intensity: 0.6, r: 224, g: 133, b: 148, browAlpha: 1.0 },
-  mischievous: { curve: 0.5,  eyeCurve: 0.3,  eyeScale: 0.9,  base: 0.06, gazeX: -0.2, gazeY: 0.0,  browH: -0.1, browA: -0.2, tilt: 0.1, aMouth: 0.3, aBrowH: 0.4, aEyeScale: -0.2, jitter: 1.2, intensity: 0.8, r: 89, g: 207, b: 183, browAlpha: 1.0 },
-  focused:     { curve: 0.0,  eyeCurve: -0.1, eyeScale: 0.95, base: 0.02, gazeX: 0.0,  gazeY: 0.0,  browH: -0.2, browA: 0.0, tilt: 0.0, aMouth: 0.0, aBrowH: 0.0, aEyeScale: 0.0, jitter: 0.5, intensity: 0.9, r: 49, g: 199, b: 216, browAlpha: 1.0 },
-  skeptical:   { curve: -0.2, eyeCurve: -0.1, eyeScale: 0.85, base: 0.03, gazeX: 0.2,  gazeY: 0.0,  browH: -0.1, browA: 0.0, tilt: -0.05, aMouth: -0.2, aBrowH: 0.3, aEyeScale: -0.1, jitter: 0.7, intensity: 0.6, r: 51, g: 210, b: 235, browAlpha: 1.0 },
 };
 
 function spring(p, t, v, k, d) {
