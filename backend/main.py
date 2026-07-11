@@ -78,8 +78,9 @@ class Core:
         # The display loop is the single JPEG-encoding reader of the shared
         # camera. It broadcasts frames to the display and stashes the latest
         # one so the brain can sample it for Gemini. The "Camera On" button
-        # gates the preview; the broker keeps capturing regardless.
+        # gates the preview.
         self._camera_on = True
+        self.broker_proc = None
         self._latest_jpeg: bytes | None = None
 
         self._last_level_sent = 0.0
@@ -135,7 +136,10 @@ class Core:
                 self.log(f"mic {'muted' if self.mic.muted else 'live'}")
         elif kind == "camera_toggle":
             self._camera_on = bool(cmd.get("enabled"))
-            if not self._camera_on:
+            if self._camera_on:
+                self.start_camera()
+            else:
+                self.stop_camera()
                 self._latest_jpeg = None
             self.log(f"camera {'on' if self._camera_on else 'off'}")
             self.server.broadcast({"type": "camera_state", "enabled": self._camera_on})
@@ -164,10 +168,6 @@ class Core:
     async def power_on(self):
         if self.brain_task and not self.brain_task.done():
             return
-        if not GEMINI_API_KEY:
-            self.status("error", "GEMINI_API_KEY missing — copy .env.example to .env")
-            self.log("GEMINI_API_KEY missing. Text fallback only.")
-            return
         self.status("connecting", "waking up…")
         self.brain_task = asyncio.create_task(self._run_brain(), name="brain")
 
@@ -182,6 +182,34 @@ class Core:
         self.status("offline", "asleep")
         self.log("cognitive core shut down")
 
+    def start_camera(self):
+        if self.broker_proc is None or not self.broker_proc.is_alive():
+            self.broker_stop_event = mp.Event()
+            self.broker_proc = mp.Process(
+                target=_run_broker,
+                args=(self.broker_stop_event,),
+                daemon=True
+            )
+            self.broker_proc.start()
+            self.log("camera broker process started (camera resource acquired)")
+
+    def stop_camera(self):
+        if self.broker_proc is not None:
+            try:
+                if self.broker_proc.is_alive():
+                    if hasattr(self, 'broker_stop_event') and self.broker_stop_event is not None:
+                        self.broker_stop_event.set()
+                    self.broker_proc.join(timeout=2.0)
+                    if self.broker_proc.is_alive():
+                        self.log("camera broker did not exit cleanly, terminating...")
+                        self.broker_proc.terminate()
+                        self.broker_proc.join(timeout=1.0)
+            except Exception as e:
+                self.log(f"error stopping camera broker: {e}")
+            self.broker_proc = None
+            self.broker_stop_event = None
+            self.log("camera broker process stopped (camera resource released)")
+
     async def _run_brain(self):
         assert self._loop is not None
         mic_q: asyncio.Queue[bytes] = asyncio.Queue(maxsize=200)
@@ -191,6 +219,48 @@ class Core:
         )
         self.mic = MicCapture(mic_q, self._loop, on_level=self._on_mic_level)
 
+        # 1. Turn the robot ON & Enable microphone/listening state
+        try:
+            self.mic.start()
+            self.log("microphone hot")
+            # 2. Update the UI to show the powered-on state
+            self.status("online", f"{GEMINI_MODEL} · voice {VOICE_NAME}")
+        except Exception as e:
+            self.status("error", f"failed to start audio: {e}")
+            self.log(f"audio start error: {e}")
+            if self.mic:
+                self.mic.stop()
+                self.mic = None
+            if self.speaker:
+                self.speaker.stop()
+                self.speaker = None
+            return
+
+        # 3. Wait for any startup animation/UI to complete
+        await asyncio.sleep(1.5)
+
+        # 4. Check if the Gemini API key exists
+        if not GEMINI_API_KEY:
+            self.log("Gemini API not found.")
+            self.server.broadcast({"type": "transcript", "role": "robot", "text": "Gemini API not found."})
+            self.server.broadcast({"type": "turn_complete"})
+            self.server.broadcast({"type": "api_status", "status": "missing"})
+            # Under no circumstances should the Gemini API error interrupt or prevent the robot from powering on successfully.
+            # So, keep the robot ON and wait until cancelled.
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                raise
+            finally:
+                if self.mic:
+                    self.mic.stop()
+                    self.mic = None
+                if self.speaker:
+                    self.speaker.stop()
+                    self.speaker = None
+            return
+
+        # 5. Initialize/Validate Gemini API
         def _handle_tool_call(name: str, args: dict):
             if name == "get_visible_people":
                 return {"people": sorted(self.roster_cache)}
@@ -202,32 +272,58 @@ class Core:
                 return self._face_command("forget_person", name=args.get("name", ""))
             return self.robot.execute(name, args)
 
-        self.brain = GeminiLiveBrain(
-            mic_queue=mic_q,
-            on_audio=lambda pcm: self.speaker.enqueue(pcm),
-            on_tool_call=_handle_tool_call,
-            on_input_transcript=lambda t: self.server.broadcast(
-                {"type": "transcript", "role": "user", "text": t}),
-            on_output_transcript=lambda t: self.server.broadcast(
-                {"type": "transcript", "role": "robot", "text": t}),
-            on_interrupted=self._on_interrupted,
-            on_turn_complete=lambda: self.server.broadcast({"type": "turn_complete"}),
-            on_log=self.log,
-            video_frame_provider=lambda: self._latest_jpeg,
-        )
+        try:
+            self.brain = GeminiLiveBrain(
+                mic_queue=mic_q,
+                on_audio=lambda pcm: self.speaker.enqueue(pcm),
+                on_tool_call=_handle_tool_call,
+                on_input_transcript=lambda t: self.server.broadcast(
+                    {"type": "transcript", "role": "user", "text": t}),
+                on_output_transcript=lambda t: self.server.broadcast(
+                    {"type": "transcript", "role": "robot", "text": t}),
+                on_interrupted=self._on_interrupted,
+                on_turn_complete=lambda: self.server.broadcast({"type": "turn_complete"}),
+                on_log=self.log,
+                video_frame_provider=lambda: self._latest_jpeg,
+            )
+            self.server.broadcast({"type": "api_status", "status": "ok"})
+        except Exception as e:
+            self.log(f"Gemini API initialization error: {e}")
+            self.log("Gemini API not found.")
+            self.server.broadcast({"type": "transcript", "role": "robot", "text": "Gemini API not found."})
+            self.server.broadcast({"type": "turn_complete"})
+            self.server.broadcast({"type": "api_status", "status": "invalid"})
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                raise
+            finally:
+                if self.mic:
+                    self.mic.stop()
+                    self.mic = None
+                if self.speaker:
+                    self.speaker.stop()
+                    self.speaker = None
+            return
+
         self._queue_visible_people_context()
 
         try:
-            self.mic.start()
-            self.log("microphone hot")
-            self.status("online", f"{GEMINI_MODEL} · voice {VOICE_NAME}")
             await self.brain.run()
         except asyncio.CancelledError:
             raise
         except Exception as e:  # noqa: BLE001
-            self.status("error", str(e))
-            self.log(f"brain error: {e}")
-            traceback.print_exc(file=sys.stderr)
+            # If the connection failed due to missing or invalid API key/permissions,
+            # or any other connection error, show "Gemini API not found."
+            self.log(f"brain connection error: {e}")
+            self.log("Gemini API not found.")
+            self.server.broadcast({"type": "transcript", "role": "robot", "text": "Gemini API not found."})
+            self.server.broadcast({"type": "turn_complete"})
+            self.server.broadcast({"type": "api_status", "status": "invalid"})
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                raise
         finally:
             if self.mic:
                 self.mic.stop()
@@ -373,6 +469,8 @@ class Core:
     async def run(self, autostart: bool):
         self._loop = asyncio.get_running_loop()
 
+        self.start_camera()
+
         if self.high_freq_q:
             asyncio.create_task(self._vision_queue_listener(), name="vision_q")
         if self.low_freq_q:
@@ -396,8 +494,8 @@ class Core:
         await asyncio.Event().wait()  # run forever
 
 
-def _run_broker():
-    FrameBroker().run()
+def _run_broker(stop_event=None):
+    FrameBroker().run(stop_event)
 
 
 def main():
@@ -411,14 +509,12 @@ def main():
     face_command_q = mp.Queue(maxsize=20)
     face_result_q = mp.Queue(maxsize=20)
 
-    broker_proc = mp.Process(target=_run_broker, daemon=True)
     worker_proc = mp.Process(
         target=run_worker,
         args=(high_q, low_q, face_command_q, face_result_q),
         daemon=True,
     )
 
-    broker_proc.start()
     worker_proc.start()
 
     try:
@@ -432,7 +528,8 @@ def main():
     except KeyboardInterrupt:
         print("\nshutdown. bye 👋")
     finally:
-        broker_proc.terminate()
+        if 'core' in locals():
+            core.stop_camera()
         worker_proc.terminate()
 
 

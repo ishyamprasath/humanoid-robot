@@ -41,7 +41,7 @@ class FrameBroker:
         except ImportError:
             pass
 
-    def run(self):
+    def run(self, stop_event=None):
         if not self._cv2:
             print("OpenCV not installed, FrameBroker exiting.")
             return
@@ -76,7 +76,7 @@ class FrameBroker:
         seq = 0
 
         try:
-            while True:
+            while stop_event is None or not stop_event.is_set():
                 start_t = time.time()
                 ret, frame = cap.read()
                 if ret:
@@ -121,32 +121,36 @@ class FrameReader:
         return True
 
     def read_latest(self):
-        if not self.connect():
-            return None
-
-        for _ in range(5):  # Max retries
-            seq, w, h = struct.unpack_from(HEADER_FMT, self.shm.buf, 0)
-
-            if seq % 2 != 0:
-                # Writer is currently writing, wait
-                time.sleep(0.001)
-                continue
-
-            if seq == self.last_seq:
-                # No new frame
+        try:
+            if not self.connect():
                 return None
 
-            frame_size = w * h * 3
-            frame_bytes = bytes(self.shm.buf[HEADER_SIZE:HEADER_SIZE + frame_size])
+            for _ in range(5):  # Max retries
+                seq, w, h = struct.unpack_from(HEADER_FMT, self.shm.buf, 0)
 
-            seq_after, _, _ = struct.unpack_from(HEADER_FMT, self.shm.buf, 0)
-            if seq != seq_after:
-                # Torn read, retry
-                continue
+                if seq % 2 != 0:
+                    # Writer is currently writing, wait
+                    time.sleep(0.001)
+                    continue
 
-            self.last_seq = seq
-            frame = np.frombuffer(frame_bytes, dtype=np.uint8).reshape((h, w, 3))
-            return frame
+                if seq == self.last_seq:
+                    # No new frame
+                    return None
+
+                frame_size = w * h * 3
+                frame_bytes = bytes(self.shm.buf[HEADER_SIZE:HEADER_SIZE + frame_size])
+
+                seq_after, _, _ = struct.unpack_from(HEADER_FMT, self.shm.buf, 0)
+                if seq != seq_after:
+                    # Torn read, retry
+                    continue
+
+                self.last_seq = seq
+                frame = np.frombuffer(frame_bytes, dtype=np.uint8).reshape((h, w, 3))
+                return frame
+        except Exception:
+            self.close()
+            return None
 
         return None
 

@@ -17,8 +17,10 @@
   const els = {
     powerBtn: $("powerBtn"), muteBtn: $("muteBtn"), cameraBtn: $("cameraBtn"),
     statusPill: $("statusPill"), statusText: $("statusText"),
+    apiStatusPill: $("apiStatusPill"), apiStatusText: $("apiStatusText"),
     linkPill: $("linkPill"), linkText: $("linkText"),
-    cameraFrame: $("cameraFrame"), cameraOverlay: $("cameraOverlay"), cameraIdle: $("cameraIdle"),
+    cameraWrap: $("cameraWrap"),
+    cameraFrame: $("cameraFrame"), cameraVideo: $("cameraVideo"), cameraOverlay: $("cameraOverlay"), cameraIdle: $("cameraIdle"),
     micMeterFill: $("micMeterFill"), speakingDot: $("speakingDot"),
     transcript: $("transcript"), textInput: $("textInput"), textSend: $("textSend"),
   };
@@ -29,7 +31,9 @@
   const state = {
     powerOn: false,
     muted: false,
-    cameraOn: true,
+    cameraOn: false,
+    previewShown: false,
+    micLevel: 0,
     target: { x: 0, y: 0, heading: Math.PI / 2 },
     shown:  { x: 0, y: 0, heading: Math.PI / 2 },
     gripper: "open",
@@ -43,6 +47,7 @@
 
   let ws = null;
   let userLine = null, botLine = null;
+  let localStream = null;
 
   // ----------------------------------------------------------
   // WebSocket link to the Python core (auto-reconnect)
@@ -82,6 +87,19 @@
         state.powerOn = msg.state === "online" || msg.state === "connecting";
         els.powerBtn.textContent = state.powerOn ? "Power Off" : "Power On";
         els.powerBtn.classList.toggle("danger", state.powerOn);
+        if (!state.powerOn) {
+          if (els.apiStatusPill) els.apiStatusPill.style.display = "none";
+        }
+        break;
+      }
+      case "api_status": {
+        if (els.apiStatusPill) {
+          if (msg.status === "missing" || msg.status === "invalid") {
+            els.apiStatusPill.style.display = "inline-flex";
+          } else {
+            els.apiStatusPill.style.display = "none";
+          }
+        }
         break;
       }
       case "transcript": {
@@ -103,6 +121,7 @@
         break;
       case "mic_level":
         els.micMeterFill.style.width = `${Math.min(100, msg.rms * 300)}%`;
+        state.micLevel = msg.rms;
         break;
       case "robot": {
         const p = msg.pose || {};
@@ -133,13 +152,42 @@
         break;
       case "camera_state":
         state.cameraOn = msg.enabled;
-        els.cameraBtn.textContent = state.cameraOn ? "Camera Off" : "Camera On";
-        els.cameraBtn.classList.toggle("active", state.cameraOn);
+        els.cameraBtn.textContent = state.previewShown ? "Disable Camera" : "Enable Camera";
+        els.cameraBtn.classList.toggle("active", state.previewShown);
+        if (els.cameraWrap) els.cameraWrap.style.display = state.previewShown ? "block" : "none";
         if (!state.cameraOn) {
           els.cameraIdle.style.display = "flex";
+          els.cameraFrame.style.display = "block";
+          if (els.cameraVideo) {
+            els.cameraVideo.style.display = "none";
+            if (localStream) {
+              localStream.getTracks().forEach(t => t.stop());
+              localStream = null;
+            }
+            els.cameraVideo.srcObject = null;
+          }
           els.cameraFrame.src = "";
           state.frameSeen = false;
           clearBoxes();
+        } else {
+          els.cameraIdle.style.display = "none";
+          if (els.cameraVideo) {
+            els.cameraVideo.style.display = "block";
+            els.cameraFrame.style.display = "none";
+            if (!localStream) {
+              navigator.mediaDevices.getUserMedia({ video: true })
+                .then((stream) => {
+                  localStream = stream;
+                  els.cameraVideo.srcObject = stream;
+                  els.cameraVideo.play().catch(() => {});
+                })
+                .catch((err) => {
+                  console.error("Camera access failed, falling back to backend frames", err);
+                  if (els.cameraVideo) els.cameraVideo.style.display = "none";
+                  if (els.cameraFrame) els.cameraFrame.style.display = "block";
+                });
+            }
+          }
         }
         break;
       case "vision_bboxes":
@@ -159,7 +207,10 @@
   // ----------------------------------------------------------
   els.powerBtn.addEventListener("click", () => send({ type: "power", on: !state.powerOn }));
   els.cameraBtn.addEventListener("click", () => {
-    send({ type: "camera_toggle", enabled: !state.cameraOn });
+    state.previewShown = !state.previewShown;
+    if (els.cameraWrap) els.cameraWrap.style.display = state.previewShown ? "block" : "none";
+    els.cameraBtn.textContent = state.previewShown ? "Disable Camera" : "Enable Camera";
+    els.cameraBtn.classList.toggle("active", state.previewShown);
   });
   els.muteBtn.addEventListener("click", () => {
     state.muted = !state.muted;
@@ -239,7 +290,71 @@
     // drawWorld(); // Map removed from UI
     drawOverlay();
     // renderHud(); // HUD removed from UI
+    drawMicWaveform();
     requestAnimationFrame(tick);
+  }
+
+  let currentAmp = 0;
+  function drawMicWaveform() {
+    const canvas = $("micWaveform");
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    const W = canvas.width, H = canvas.height;
+    ctx.clearRect(0, 0, W, H);
+
+    // Easing for amplitude (increased gain for high-res canvas buffer)
+    const targetAmp = state.micLevel * 320;
+    currentAmp += (targetAmp - currentAmp) * 0.12;
+
+    // Create a multi-color gradient spanning the full canvas width
+    const grad = ctx.createLinearGradient(0, 0, W, 0);
+    grad.addColorStop(0.0, "#00F5FF");  // Cyan
+    grad.addColorStop(0.25, "#4F8CFF"); // Blue
+    grad.addColorStop(0.5, "#8A5CFF");  // Purple
+    grad.addColorStop(0.75, "#C84DFF"); // Magenta
+    grad.addColorStop(1.0, "#FF4FC3");  // Pink
+
+    ctx.strokeStyle = grad;
+    ctx.lineCap = "round";
+
+    // Set a premium glow effect around the curves
+    ctx.shadowColor = "rgba(138, 92, 255, 0.45)";
+    ctx.shadowBlur = 14;
+
+    const t = performance.now() * 0.003;
+    const linesCount = 3;
+
+    for (let l = 0; l < linesCount; l++) {
+      ctx.lineWidth = l === 0 ? 3.6 : l === 1 ? 2.2 : 1.2;
+      ctx.globalAlpha = l === 0 ? 0.9 : l === 1 ? 0.6 : 0.3;
+      ctx.beginPath();
+      
+      const speed = (l + 1) * 0.7;
+      const phase = l * Math.PI / 3.0;
+
+      for (let x = 0; x < W; x++) {
+        const normalizedX = x / W;
+        // The sine envelope tapers the wave at the start and end (providing padding)
+        const envelope = Math.sin(normalizedX * Math.PI);
+        
+        // Base noise keeps a subtle horizontal idle line moving during silence
+        const baseNoise = 2.2 * Math.sin(x * 0.02 + t * 4 + phase);
+        
+        // Final line coordinates combining microphone amplitude and baseline wave noise
+        const y = H / 2 + envelope * (currentAmp * Math.sin(x * 0.015 - t * speed * 3 + phase) + baseNoise);
+
+        if (x === 0) {
+          ctx.moveTo(x, y);
+        } else {
+          ctx.lineTo(x, y);
+        }
+      }
+      ctx.stroke();
+    }
+
+    // Reset rendering configurations
+    ctx.globalAlpha = 1.0;
+    ctx.shadowBlur = 0;
   }
 
   function drawWorld() {
@@ -326,6 +441,12 @@
 
   // boot
   // logAction("display client ready — connecting to Python core…");
+  window.addEventListener("beforeunload", () => {
+    if (localStream) {
+      localStream.getTracks().forEach(t => t.stop());
+      localStream = null;
+    }
+  });
   connect();
   requestAnimationFrame(tick);
 })();

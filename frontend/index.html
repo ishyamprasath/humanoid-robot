@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Robot · Cognitive Core</title>
-  <link rel="stylesheet" href="css/style.css" />
+  <link rel="stylesheet" href="css/style.css?v=8" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🤖</text></svg>" />
 </head>
 <body>
@@ -32,8 +32,11 @@
       <div class="status-pill" id="linkPill" data-state="error" title="Backend link">
         <span class="dot"></span><span id="linkText">Backend…</span>
       </div>
-      <button id="cameraBtn" class="btn ghost">Camera On</button>
+      <button id="cameraBtn" class="btn ghost">Enable Camera</button>
       <button id="muteBtn"  class="btn ghost">Mute</button>
+      <div class="status-pill" id="apiStatusPill" data-state="error" style="display: none;">
+        <span class="dot"></span><span id="apiStatusText">Gemini API Key Not Found</span>
+      </div>
       <button id="powerBtn" class="btn primary">Power On</button>
     </div>
   </header>
@@ -46,28 +49,22 @@
         <div class="card-title">Robot Vision</div>
         <div class="card-sub">streamed from the Python core · 1 fps</div>
       </div>
-      <div class="camera-wrap">
-        <img id="cameraFrame" alt="" />
-        <canvas id="cameraOverlay" width="640" height="480"></canvas>
-        <div class="camera-idle" id="cameraIdle">camera offline</div>
+      <div class="camera-area">
+        <div class="camera-wrap" id="cameraWrap" style="display: none;">
+          <video id="cameraVideo" autoplay playsinline muted style="display: none;"></video>
+          <img id="cameraFrame" alt="" />
+          <canvas id="cameraOverlay" width="640" height="480"></canvas>
+          <div class="camera-idle" id="cameraIdle">camera offline</div>
+        </div>
       </div>
     </section>
 
     <div class="workspace-grid">
-      <!-- LEFT: conversation -->
-      <aside class="col left">
-        <section class="card conversation-card">
-          <div class="card-head">
-            <div class="card-title">Conversation</div>
-            <div class="card-sub">live transcript · you &amp; the robot</div>
-          </div>
-          <div class="log clean" id="transcript"></div>
-          <div class="chat-row">
-            <input id="textInput" type="text" placeholder="Type instead of talking…" />
-            <button id="textSend" class="btn primary compact">Send</button>
-          </div>
-        </section>
-      </aside>
+      <div style="display: none;">
+        <div id="transcript"></div>
+        <input id="textInput" type="text" />
+        <button id="textSend"></button>
+      </div>
 
       <!-- RIGHT: audio pulse -->
       <aside class="col right">
@@ -78,10 +75,8 @@
           </div>
           <div class="audio-pulse-wrap">
             <div class="mic-meter"><div id="micMeterFill"></div></div>
-            <div class="speaking-indicator">
-              <span class="speaking" id="speakingDot" title="Robot speaking">◉</span>
-              <span>Robot is speaking...</span>
-            </div>
+            <canvas id="micWaveform" width="1000" height="150"></canvas>
+            <span id="speakingDot" style="display: none;"></span>
           </div>
         </section>
       </aside>
@@ -89,6 +84,6 @@
 
   </main>
 
-  <script src="js/display.js"></script>
+  <script src="js/display.js?v=8"></script>
 </body>
 </html>
