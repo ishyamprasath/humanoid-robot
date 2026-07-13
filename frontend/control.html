@@ -20,12 +20,21 @@
       <div class="status-pill" id="statusPill" data-state="offline">
         <span class="dot"></span><span id="statusText">Offline</span>
       </div>
+      <button id="settingsBtn" class="btn">⚙️ Settings</button>
+      <button id="faceTranscriptBtn" class="btn">Face Transcript</button>
+      <button id="modeToggleBtn" class="btn">Mode: Auto</button>
       <button id="muteBtn" class="btn">Mute Mic</button>
       <button id="powerBtn" class="btn primary">Power On</button>
     </div>
   </header>
 
   <main class="dashboard-workspace">
+    <div class="video-pane pane">
+      <h3>Live Camera</h3>
+      <div class="video-container" style="margin-bottom: 1rem;">
+        <video id="remoteVideo" autoplay playsinline muted style="width: 100%; max-height: 250px; border-radius: 8px; background: #000; object-fit: contain;"></video>
+      </div>
+    </div>
     <div class="left-pane pane">
       <h3>Transcript</h3>
       <div id="transcript" class="scroll-box"></div>
@@ -50,6 +59,34 @@
       <button id="textSend" class="btn primary">Send</button>
     </div>
   </footer>
+
+  <!-- Settings Modal -->
+  <div id="settingsModal" class="modal-overlay" style="display: none;">
+    <div class="modal-content card">
+      <div class="card-head">
+        <div class="card-title">Local LLM Settings</div>
+        <button id="closeSettingsBtn" class="btn ghost compact">✕</button>
+      </div>
+      <div class="modal-body" style="display: flex; flex-direction: column; gap: 15px; margin-top: 15px;">
+        <div>
+          <label style="font-size: 11px; color: #888; text-transform: uppercase;">API Base URL</label>
+          <div style="display: flex; gap: 10px; margin-top: 5px;">
+            <input type="text" id="llmUrlInput" value="http://localhost:1234/v1" style="flex: 1; padding: 8px; background: #000; color: #fff; border: 1px solid #444; border-radius: 4px;" />
+            <button id="refreshModelsBtn" class="btn">Refresh</button>
+          </div>
+        </div>
+        <div>
+          <label style="font-size: 11px; color: #888; text-transform: uppercase;">Model</label>
+          <select id="llmModelSelect" style="width: 100%; padding: 8px; background: #000; color: #fff; border: 1px solid #444; border-radius: 4px; margin-top: 5px;">
+            <option value="">Load models first...</option>
+          </select>
+        </div>
+        <div style="text-align: right; margin-top: 10px;">
+          <button id="saveSettingsBtn" class="btn primary">Save & Apply</button>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <script type="module" src="src/control.js"></script>
 </body>

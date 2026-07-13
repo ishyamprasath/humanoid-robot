@@ -45,6 +45,75 @@ relay.on('text', (payload) => {
     }
 });
 
+let requestedMode = 'auto';
+relay.on('llm_mode', (payload) => {
+    requestedMode = payload.mode;
+    logAction(`llm mode -> ${requestedMode}`);
+    if (state.powerOn) {
+        powerOff();
+        setTimeout(powerOn, 1000);
+    }
+});
+
+relay.on('toggle_transcript', (payload) => {
+    if (els.transcript) {
+        els.transcript.style.display = payload.show ? 'flex' : 'none';
+    }
+});
+
+// WebRTC Streaming to Control Dashboard
+let rtcPeerConnection = null;
+
+async function initWebRTCSender() {
+    if (rtcPeerConnection) rtcPeerConnection.close();
+    rtcPeerConnection = new RTCPeerConnection({
+        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+    });
+
+    rtcPeerConnection.onicecandidate = (e) => {
+        if (e.candidate) relay.publish('webrtc_ice_face', { candidate: e.candidate });
+    };
+
+    if (camStream) {
+        camStream.getTracks().forEach(track => {
+            if (track.kind === 'video') {
+                const sender = rtcPeerConnection.addTrack(track, camStream);
+                const params = sender.getParameters();
+                if (!params.encodings) params.encodings = [{}];
+                params.encodings[0].maxFramerate = 15;
+                params.encodings[0].maxBitrate = 500000;
+                sender.setParameters(params).catch(e => console.warn('WebRTC setParameters failed:', e));
+            }
+        });
+    }
+
+    try {
+        const offer = await rtcPeerConnection.createOffer();
+        await rtcPeerConnection.setLocalDescription(offer);
+        relay.publish('webrtc_offer', { offer });
+    } catch (e) {
+        console.error('WebRTC offer error:', e);
+    }
+}
+
+relay.on('webrtc_request', () => {
+    if (camStream) initWebRTCSender();
+});
+
+relay.on('webrtc_answer', async (payload) => {
+    if (rtcPeerConnection && payload.answer) {
+        try { await rtcPeerConnection.setRemoteDescription(new RTCSessionDescription(payload.answer)); } 
+        catch (e) { console.error('WebRTC answer error:', e); }
+    }
+});
+
+relay.on('webrtc_ice_control', async (payload) => {
+    if (rtcPeerConnection && payload.candidate) {
+        try { await rtcPeerConnection.addIceCandidate(new RTCIceCandidate(payload.candidate)); } 
+        catch (e) { console.error('WebRTC ice error:', e); }
+    }
+});
+
 const $ = (id) => document.getElementById(id);
 const els = {
   powerBtn: $("powerBtn"), muteBtn: $("muteBtn"),
@@ -214,15 +283,17 @@ function newLine(who, cls) {
 }
 
 function transcriptDelta(role, text) {
+  let isNew = false;
   if (role === "user") {
-    if (!userLine) userLine = newLine("You", "user");
+    if (!userLine) { userLine = newLine("You", "user"); isNew = true; }
     userLine.textContent += text;
+    relay.publish("transcript", { role, text: userLine.textContent, isNew });
   } else {
-    if (!botLine) botLine = newLine("Robot", "bot");
+    if (!botLine) { botLine = newLine("Robot", "bot"); isNew = true; }
     botLine.textContent += text;
+    relay.publish("transcript", { role, text: botLine.textContent, isNew });
   }
   els.transcript.scrollTop = els.transcript.scrollHeight;
-  relay.publish("transcript", { role, text });
 }
 
 // ----------------------------------------------------------
@@ -561,7 +632,7 @@ function initSpeechRecognition(wsRef) {
                 
                 // Stop the recognition immediately to prevent further result events
                 try { rec.stop(); } catch(e){}
-            }, 2200); // 2.2 seconds of silence to allow mid-sentence pauses
+            }, 1400); // 1.4 seconds of silence to balance speed and breath pauses
         }
     };
     
@@ -850,10 +921,11 @@ async function connect() {
   }
   
   setStatus("connecting", "waking up…");
-  logAction(`connecting -> Local LLM`);
+  logAction(`connecting -> Backend`);
 
   try {
-    const socket = new WebSocket(`ws://localhost:8080/ws?sessionId=${currentSessionId}`);
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const socket = new WebSocket(`${protocol}//${window.location.host}/ws?sessionId=${currentSessionId}&mode=${requestedMode}`);
     ws = socket;
     window.activeWebSocket = socket;
     

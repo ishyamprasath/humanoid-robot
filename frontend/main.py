@@ -92,12 +92,11 @@ For EVERY response, output ONLY valid JSON:
 
 def clean_json_text(text: str) -> str:
     text = text.strip()
-    if text.startswith("```"):
-        idx = text.find("\n")
-        if idx != -1:
-            text = text[idx:].strip()
-        if text.endswith("```"):
-            text = text[:-3].strip()
+    # Try to find the first '{' and last '}'
+    start_idx = text.find('{')
+    end_idx = text.rfind('}')
+    if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+        return text[start_idx:end_idx+1]
     return text
 
 @app.get("/api/config")
@@ -116,8 +115,11 @@ async def get_config():
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     session_id = websocket.query_params.get("sessionId", "default")
+    requested_mode = websocket.query_params.get("mode", "")
     
-    if ROBOT_MODE == "gemini_live":
+    current_mode = requested_mode if requested_mode and requested_mode != "auto" else ROBOT_MODE
+    
+    if current_mode == "gemini_live":
         print(f"[WS] Client connected (Gemini Live mode, Session: {session_id})")
         
         model = ENV_VARS.get("VITE_GEMINI_MODEL") or ENV_VARS.get("GEMINI_MODEL", "")
@@ -174,7 +176,42 @@ async def websocket_endpoint(websocket: WebSocket):
                         ] + history,
                         "temperature": 0.8,
                         "max_tokens": 10000,
-                        "response_format": {"type": "json_object"}
+                        "response_format": {
+                            "type": "json_schema",
+                            "json_schema": {
+                                "name": "robot_response",
+                                "strict": True,
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "emotion": { "type": "string" },
+                                        "emotion_intensity": { "type": "number" },
+                                        "speech_text": { "type": "string" },
+                                        "face_expression": {
+                                            "type": "object",
+                                            "properties": {
+                                                "eye_shape": { "type": "string" },
+                                                "eyebrow_shape": { "type": "string" },
+                                                "mouth_shape": { "type": "string" },
+                                                "mouth_open": { "type": "number" },
+                                                "eye_blink": { "type": "boolean" },
+                                                "head_tilt": { "type": "number" },
+                                                "color": { "type": "string" }
+                                            }
+                                        },
+                                        "prosody": {
+                                            "type": "object",
+                                            "properties": {
+                                                "pitch": { "type": "number" },
+                                                "speed": { "type": "number" },
+                                                "volume": { "type": "number" }
+                                            }
+                                        }
+                                    },
+                                    "required": ["emotion", "speech_text"]
+                                }
+                            }
+                        }
                     }
                     
                     async with aiohttp.ClientSession() as http_session:
@@ -210,6 +247,28 @@ async def websocket_endpoint(websocket: WebSocket):
                 })
             except:
                 pass
+
+@app.get("/api/local_models")
+async def get_local_models(url: str = "http://localhost:1234/v1"):
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(f"{url}/models", timeout=3) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    return data
+                return {"error": f"Status {resp.status}"}
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.post("/api/config/llm")
+async def update_llm_config(request: Request):
+    try:
+        data = await request.json()
+        ENV_VARS["LOCAL_LLM_URL"] = data.get("url", "http://localhost:1234/v1/chat/completions")
+        ENV_VARS["LOCAL_LLM_MODEL"] = data.get("model", "local-model")
+        return {"status": "ok"}
+    except Exception as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
 
 @app.post("/api/log/conversation")
 async def log_conversation(request: Request):
@@ -319,11 +378,11 @@ async def relay_endpoint(websocket: WebSocket):
 
 # Serving static assets
 DIST_DIR = os.path.join(ROOT_DIR, "dist")
-if os.path.exists(DIST_DIR) and os.path.exists(os.path.join(DIST_DIR, "index.html")):
+if os.path.exists(DIST_DIR) and os.path.exists(os.path.join(DIST_DIR, "face.html")):
     print("[Server] Serving frontend from built 'dist/' directory")
     @app.get("/", response_class=HTMLResponse)
     async def serve_index():
-        with open(os.path.join(DIST_DIR, "index.html"), "r", encoding="utf-8") as f:
+        with open(os.path.join(DIST_DIR, "face.html"), "r", encoding="utf-8") as f:
             return f.read()
 
     @app.get("/face", response_class=HTMLResponse)
@@ -342,11 +401,11 @@ else:
     print("[Server] 'dist/' directory not found. Serving directly from source files (development fallback)")
     @app.get("/", response_class=HTMLResponse)
     async def serve_index():
-        index_path = os.path.join(ROOT_DIR, "index.html")
+        index_path = os.path.join(ROOT_DIR, "face.html")
         if os.path.exists(index_path):
             with open(index_path, "r", encoding="utf-8") as f:
                 return f.read()
-        return "index.html not found!"
+        return "face.html not found!"
         
     @app.get("/face", response_class=HTMLResponse)
     async def serve_face():

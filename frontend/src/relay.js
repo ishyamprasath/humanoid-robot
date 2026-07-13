@@ -12,6 +12,9 @@ export class RelayClient {
 
         this.socket.onopen = () => {
             console.log('[Relay] Connected');
+            if (this.handlers.has('open')) {
+                this.handlers.get('open').forEach(cb => cb());
+            }
             if (this.reconnectTimer) {
                 clearTimeout(this.reconnectTimer);
                 this.reconnectTimer = null;

@@ -869,7 +869,7 @@ button { border: 0; background: none; cursor: pointer; }
 }
 
 /* Floating Transcript Style */
-#transcript {
+.face-app #transcript {
   position: absolute;
   bottom: 24px;
   left: 50%;
