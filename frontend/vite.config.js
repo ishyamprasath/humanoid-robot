@@ -71,6 +71,14 @@ export default defineConfig({
     port: Number(process.env.PORT) || 5173,
     host: true,
   },
-
+  build: {
+    rollupOptions: {
+      input: {
+        index: path.resolve(__dirname, 'index.html'),
+        face: path.resolve(__dirname, 'face.html'),
+        control: path.resolve(__dirname, 'control.html'),
+      }
+    }
+  },
   plugins: [loggerPlugin()],
 });

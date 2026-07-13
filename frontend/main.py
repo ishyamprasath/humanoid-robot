@@ -33,6 +33,9 @@ LIVE_SESSION_MEMORIES = {}
 # Process-global memory store for Gemma local completion history
 GEMMA_SESSION_HISTORIES = {}
 
+RELAY_CLIENTS = set()
+LATEST_STATE = {}
+
 # Parse environment variables from both frontend/.env and root .env
 ENV_VARS = {}
 
@@ -280,6 +283,40 @@ async def log_action(request: Request):
     except Exception as e:
         return JSONResponse(status_code=400, content={"error": str(e)})
 
+@app.websocket("/relay")
+async def relay_endpoint(websocket: WebSocket):
+    await websocket.accept()
+    RELAY_CLIENTS.add(websocket)
+    print(f"[Relay] Client connected. Total clients: {len(RELAY_CLIENTS)}")
+    
+    if "status" in LATEST_STATE:
+        try:
+            await websocket.send_text(LATEST_STATE["status"])
+        except:
+            pass
+
+    try:
+        while True:
+            data = await websocket.receive_text()
+            
+            try:
+                parsed = json.loads(data)
+                if parsed.get("type") == "status":
+                    LATEST_STATE["status"] = data
+            except:
+                pass
+
+            for client in list(RELAY_CLIENTS):
+                if client != websocket:
+                    try:
+                        await client.send_text(data)
+                    except:
+                        RELAY_CLIENTS.discard(client)
+    except Exception as e:
+        print(f"[Relay] Client disconnected: {e}")
+    finally:
+        RELAY_CLIENTS.discard(websocket)
+
 # Serving static assets
 DIST_DIR = os.path.join(ROOT_DIR, "dist")
 if os.path.exists(DIST_DIR) and os.path.exists(os.path.join(DIST_DIR, "index.html")):
@@ -288,6 +325,17 @@ if os.path.exists(DIST_DIR) and os.path.exists(os.path.join(DIST_DIR, "index.htm
     async def serve_index():
         with open(os.path.join(DIST_DIR, "index.html"), "r", encoding="utf-8") as f:
             return f.read()
+
+    @app.get("/face", response_class=HTMLResponse)
+    async def serve_face():
+        path = os.path.join(DIST_DIR, "face.html")
+        return open(path, "r", encoding="utf-8").read() if os.path.exists(path) else "face.html not found!"
+
+    @app.get("/control", response_class=HTMLResponse)
+    async def serve_control():
+        path = os.path.join(DIST_DIR, "control.html")
+        return open(path, "r", encoding="utf-8").read() if os.path.exists(path) else "control.html not found!"
+
     app.mount("/assets", StaticFiles(directory=os.path.join(DIST_DIR, "assets")), name="assets")
     app.mount("/models", StaticFiles(directory=os.path.join(DIST_DIR, "models")), name="models")
 else:
@@ -299,6 +347,16 @@ else:
             with open(index_path, "r", encoding="utf-8") as f:
                 return f.read()
         return "index.html not found!"
+        
+    @app.get("/face", response_class=HTMLResponse)
+    async def serve_face():
+        path = os.path.join(ROOT_DIR, "face.html")
+        return open(path, "r", encoding="utf-8").read() if os.path.exists(path) else "face.html not found!"
+
+    @app.get("/control", response_class=HTMLResponse)
+    async def serve_control():
+        path = os.path.join(ROOT_DIR, "control.html")
+        return open(path, "r", encoding="utf-8").read() if os.path.exists(path) else "control.html not found!"
         
     app.mount("/src", StaticFiles(directory=os.path.join(ROOT_DIR, "src")), name="src")
     app.mount("/css", StaticFiles(directory=os.path.join(ROOT_DIR, "css")), name="css")

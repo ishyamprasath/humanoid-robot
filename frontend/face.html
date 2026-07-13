@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Robot · Face Display</title>
+  <link rel="stylesheet" href="css/style.css" />
+  <link rel="stylesheet" href="css/face.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🤖</text></svg>" />
+</head>
+<body class="face-app mode-face">
+
+  <main class="workspace" id="faceWorkspace">
+
+    <!-- CAMERA (what the robot sees) -->
+    <div class="full-cam-container" id="cameraContainer">
+      <video id="cameraFeed" autoplay playsinline muted></video>
+      <canvas id="cameraOverlay" width="640" height="480"></canvas>
+      <div class="camera-idle" id="cameraIdle">camera offline</div>
+    </div>
+
+    <!-- ROBOT FACE (LED dot-matrix, emotes with the voice) -->
+    <div class="face-container" id="faceContainer">
+      <canvas id="robotFace"></canvas>
+    </div>
+
+  </main>
+
+  <!-- HIDDEN UTILITIES (kept in DOM to prevent breaking main.js orchestrator) -->
+  <div class="hidden" style="display: none;">
+    <button id="powerBtn"></button>
+    <span id="speakingDot"></span>
+    <button id="muteBtn"></button>
+    <button id="textSend"></button>
+    <input id="textInput" />
+    <div id="transcript"></div>
+    <div id="taskList"></div>
+    <div id="actionLog"></div>
+    <canvas id="simCanvas" width="620" height="620"></canvas>
+    <span id="coordWorld"></span>
+    <span id="coordHeading"></span>
+    <span id="coordCam"></span>
+    <span id="coordWorldTarget"></span>
+    <span id="statGripper"></span>
+    <span id="statCurrentTask"></span>
+    <span id="statVisitor"></span>
+    <div id="statusPill"></div>
+    <span id="statusText"></span>
+    <div id="linkPill"></div>
+    <span id="linkText"></span>
+  </div>
+
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>

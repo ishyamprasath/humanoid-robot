@@ -20,6 +20,30 @@ import { Robot } from "./robot.js";
 import { buildTools } from "./tools.js";
 import { GoogleGenAI, Modality } from "@google/genai";
 import { MicCapture, SpeakerPlayer } from "./audio.js";
+import { relay } from "./relay.js";
+
+relay.connect();
+
+relay.on('display_mode', (payload) => {
+    if (payload.mode) {
+        document.body.className = "face-app mode-" + payload.mode;
+    }
+});
+relay.on('power', (payload) => {
+    if (payload.on !== state.powerOn) {
+        if (payload.on) powerOn();
+        else powerOff();
+    }
+});
+relay.on('mute', (payload) => {
+    if (state.muted !== payload.muted) els.muteBtn.click();
+});
+relay.on('text', (payload) => {
+    if (payload.text) {
+        els.textInput.value = payload.text;
+        sendText();
+    }
+});
 
 const $ = (id) => document.getElementById(id);
 const els = {
@@ -159,6 +183,7 @@ function setStatus(st, detail = "") {
   state.powerOn = st === "online" || st === "connecting";
   els.powerBtn.textContent = state.powerOn ? "Power Off" : "Power On";
   els.powerBtn.classList.toggle("danger", state.powerOn);
+  relay.publish("status", { state: st, detail });
 }
 
 function setMedia(up, label) {
@@ -173,6 +198,7 @@ function logAction(text) {
   els.actionLog.appendChild(div);
   els.actionLog.scrollTop = els.actionLog.scrollHeight;
   while (els.actionLog.children.length > 300) els.actionLog.removeChild(els.actionLog.firstChild);
+  relay.publish("log", { kind: "action", text });
 }
 
 function newLine(who, cls) {
@@ -196,6 +222,7 @@ function transcriptDelta(role, text) {
     botLine.textContent += text;
   }
   els.transcript.scrollTop = els.transcript.scrollHeight;
+  relay.publish("transcript", { role, text });
 }
 
 // ----------------------------------------------------------
@@ -214,10 +241,12 @@ const robot = new Robot({
 
     // Log task event to server if this is execute_task and success
     if (name === "execute_task" && ok) {
+      const msg = `Task ${result.task_id} (${args.task_type}): "${args.description}" - priority: ${args.priority || "normal"}`;
       postLog("task", {
         event: "created",
-        message: `Task ${result.task_id} (${args.task_type}): "${args.description}" - priority: ${args.priority || "normal"}`
+        message: msg
       });
+      relay.publish("log", { kind: "task", text: `[CREATED] ${msg}` });
     }
   },
   onState: (snap) => {
@@ -239,10 +268,12 @@ const robot = new Robot({
       if (prev !== t.status) {
         lastTaskStatuses.set(t.id, t.status);
         if (prev) { // only log changes, not initial state
+          const msg = `Task ${t.id} (${t.type}) status changed from "${prev}" to "${t.status}"`;
           postLog("task", {
             event: "status_change",
-            message: `Task ${t.id} (${t.type}) status changed from "${prev}" to "${t.status}"`
+            message: msg
           });
+          relay.publish("log", { kind: "task", text: `[STATUS] ${msg}` });
         }
       }
     }

@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Robot · Control Dashboard</title>
+  <link rel="stylesheet" href="css/style.css" />
+  <link rel="stylesheet" href="css/control.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎛️</text></svg>" />
+</head>
+<body class="control-app">
+
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-text">
+        <div class="brand-name">Robot Dashboard</div>
+      </div>
+    </div>
+    <div class="topbar-actions">
+      <div class="status-pill" id="statusPill" data-state="offline">
+        <span class="dot"></span><span id="statusText">Offline</span>
+      </div>
+      <button id="muteBtn" class="btn">Mute Mic</button>
+      <button id="powerBtn" class="btn primary">Power On</button>
+    </div>
+  </header>
+
+  <main class="dashboard-workspace">
+    <div class="left-pane pane">
+      <h3>Transcript</h3>
+      <div id="transcript" class="scroll-box"></div>
+    </div>
+    
+    <div class="right-pane pane">
+      <h3>Logs & Actions</h3>
+      <div id="actionLog" class="scroll-box log-box"></div>
+      <div id="taskList" class="scroll-box log-box"></div>
+    </div>
+  </main>
+
+  <footer class="dashboard-footer">
+    <div class="display-controls">
+      <strong>Robot Display Mode:</strong>
+      <button class="btn mode-btn active" data-mode="face">Face Only</button>
+      <button class="btn mode-btn" data-mode="camera">Camera Only</button>
+      <button class="btn mode-btn" data-mode="split">Split View</button>
+    </div>
+    <div class="cli-input">
+      <input type="text" id="textInput" placeholder="CLI override command..." />
+      <button id="textSend" class="btn primary">Send</button>
+    </div>
+  </footer>
+
+  <script type="module" src="src/control.js"></script>
+</body>
+</html>

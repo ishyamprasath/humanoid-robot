@@ -1,0 +1,98 @@
+/* frontend/css/control.css */
+body.control-app {
+    background: #111;
+    color: #fff;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    margin: 0;
+    font-family: monospace;
+}
+
+.dashboard-workspace {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+    padding: 20px;
+    gap: 20px;
+}
+
+.pane {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    background: #1a1a1a;
+    border-radius: 8px;
+    padding: 15px;
+    border: 1px solid #333;
+}
+
+h3 {
+    margin-top: 0;
+    color: #888;
+    border-bottom: 1px solid #333;
+    padding-bottom: 10px;
+}
+
+.scroll-box {
+    flex: 1;
+    overflow-y: auto;
+    font-size: 14px;
+    line-height: 1.5;
+    padding-right: 10px;
+}
+
+.log-box {
+    flex: 0.5; /* split height between action and tasks */
+    margin-bottom: 10px;
+}
+.log-box:last-child { margin-bottom: 0; }
+
+.dashboard-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 15px 20px;
+    background: #222;
+    border-top: 1px solid #333;
+}
+
+.display-controls {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
+.cli-input {
+    display: flex;
+    gap: 10px;
+    flex: 0.6;
+}
+
+.cli-input input {
+    flex: 1;
+    padding: 10px;
+    background: #000;
+    color: #0f0;
+    border: 1px solid #444;
+    border-radius: 4px;
+    font-family: monospace;
+}
+
+.mode-btn.active {
+    background: #007bff;
+    color: white;
+}
+
+/* Override btn for control app */
+.control-app .btn {
+    padding: 8px 16px;
+    background: #333;
+    border: 1px solid #555;
+    color: white;
+    cursor: pointer;
+    border-radius: 4px;
+}
+.control-app .btn:hover { background: #444; }
+.control-app .btn.primary { background: #007bff; border-color: #0056b3; }
+.control-app .btn.primary:hover { background: #0056b3; }
