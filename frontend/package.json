@@ -8,13 +8,16 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "postinstall": "node scripts/copy-models.mjs"
+    "postinstall": "node scripts/copy-models.mjs",
+    "tauri": "tauri"
   },
   "dependencies": {
     "@google/genai": "^1.16.0",
+    "@tauri-apps/api": "^2.11.1",
     "@vladmandic/face-api": "^1.7.15"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "^2.11.4",
     "vite": "^7.1.3"
   },
   "allowScripts": {

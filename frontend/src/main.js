@@ -1331,6 +1331,15 @@ requestAnimationFrame(tick);
 // Auto-start camera + face detection without needing Power On.
 bootCamera();
 
+// Close Tauri splashscreen and reveal main app window after setup completes
+if (typeof window !== "undefined" && window.__TAURI_INTERNALS__) {
+  import("@tauri-apps/api/core").then(({ invoke }) => {
+    setTimeout(() => {
+      invoke("close_splashscreen").catch((err) => console.error("Tauri splashscreen error:", err));
+    }, 3000);
+  });
+}
+
 // ----------------------------------------------------------
 // LED dot-matrix robot face
 // ----------------------------------------------------------
