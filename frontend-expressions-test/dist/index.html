@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Robot · Cognitive Core</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🤖</text></svg>" />
+  <script type="module" crossorigin src="/assets/index-CkpwpqJo.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-BvgoxPpD.css">
+</head>
+<body>
+
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="4" y="7" width="16" height="12" rx="3"/>
+          <path d="M12 3v4"/>
+          <circle cx="9" cy="13" r="1.2" fill="currentColor" stroke="none"/>
+          <circle cx="15" cy="13" r="1.2" fill="currentColor" stroke="none"/>
+          <path d="M9 17h6"/>
+        </svg>
+      </div>
+      <div class="brand-text">
+        <div class="brand-name">Robot</div>
+      </div>
+    </div>
+    <div class="topbar-actions">
+      <div class="status-pill" id="statusPill" data-state="offline">
+        <span class="dot"></span><span id="statusText">Offline</span>
+      </div>
+      <div class="status-pill" id="linkPill" data-state="error" title="Mic + camera">
+        <span class="dot"></span><span id="linkText">Media off</span>
+      </div>
+      <button id="powerBtn" class="btn primary">Power On</button>
+    </div>
+  </header>
+
+  <main class="workspace">
+
+    <!-- LEFT: CAMERA (what the robot sees) -->
+    <div class="full-cam-container">
+      <video id="cameraFeed" autoplay playsinline muted></video>
+      <canvas id="cameraOverlay" width="640" height="480"></canvas>
+      <div class="camera-idle" id="cameraIdle">camera offline</div>
+    </div>
+
+    <!-- RIGHT: ROBOT FACE (LED dot-matrix, emotes with the voice) -->
+    <div class="face-container">
+      <canvas id="robotFace"></canvas>
+    </div>
+
+    <!-- VISIBLE TRANSCRIPT OVERLAY -->
+    <div id="transcript"></div>
+
+  </main>
+
+  <!-- HIDDEN UTILITIES (kept in DOM to prevent breaking main.js orchestrator) -->
+  <div class="hidden">
+    <span id="speakingDot"></span>
+    <button id="muteBtn"></button>
+    <button id="textSend"></button>
+    <input id="textInput" />
+    <div id="taskList"></div>
+    <div id="actionLog"></div>
+    <canvas id="simCanvas" width="620" height="620"></canvas>
+    <span id="coordWorld"></span>
+    <span id="coordHeading"></span>
+    <span id="coordCam"></span>
+    <span id="coordWorldTarget"></span>
+    <span id="statGripper"></span>
+    <span id="statCurrentTask"></span>
+    <span id="statVisitor"></span>
+  </div>
+
+</body>
+</html>
