@@ -9,6 +9,9 @@ httpx>=0.27                # NVIDIA Nemotron fallback
 
 # Optional senses / bodies:
 opencv-python>=4.9         # Camera (skip on headless dev machines)
-insightface>=0.7.3         # Face detection/recognition worker
-onnxruntime>=1.17          # InsightFace CPU runtime
 pyserial>=3.5              # ESP32 hardware bridge over USB serial
+
+# Face Identification
+insightface>=0.7.3
+onnxruntime
+scipy

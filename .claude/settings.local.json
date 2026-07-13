@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(Get-Process python -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue; Start-Sleep -Seconds 2; \"stopped: $\\(\\(Get-Process python -ErrorAction SilentlyContinue | Measure-Object\\).Count\\) procs\")"
+    ]
+  }
+}

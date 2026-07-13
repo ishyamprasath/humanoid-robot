@@ -12,24 +12,6 @@ from typing import Callable
 
 from google import genai
 from google.genai import types
-import google.genai.live as genai_live
-
-# google-genai captures websockets.asyncio.client.connect as live.ws_connect
-# during import, so patch both the source symbol and the captured SDK alias.
-import websockets
-import websockets.asyncio.client
-_original_connect = websockets.asyncio.client.connect
-
-
-def _patched_connect(*args, **kwargs):
-    kwargs["ping_interval"] = None
-    kwargs["ping_timeout"] = None
-    return _original_connect(*args, **kwargs)
-
-
-websockets.asyncio.client.connect = _patched_connect
-websockets.connect = _patched_connect
-genai_live.ws_connect = _patched_connect
 
 from config import (GEMINI_API_KEY, GEMINI_API_VERSION, GEMINI_MODEL,
                     SEND_SAMPLE_RATE, SYSTEM_PROMPT, VIDEO_GEMINI_FPS,
@@ -49,7 +31,8 @@ class GeminiLiveBrain:
         on_interrupted: Callable[[], None],
         on_turn_complete: Callable[[], None],
         on_log: Callable[[str], None],
-        video_frame_provider: Callable[[], bytes | None] | None = None,
+        on_video_frame: Callable[[bytes], None] | None = None,
+        video_source=None,
     ):
         self._mic_q = mic_queue
         self._on_audio = on_audio
@@ -59,9 +42,8 @@ class GeminiLiveBrain:
         self._on_interrupted = on_interrupted
         self._on_turn_complete = on_turn_complete
         self._on_log = on_log
-        # Returns the latest camera JPEG (or None). The core's camera pump owns
-        # the capture device; we just sample it — no direct camera access here.
-        self._get_frame = video_frame_provider
+        self._on_video_frame = on_video_frame or (lambda b: None)
+        self._video = video_source
 
         self._client = genai.Client(
             api_key=GEMINI_API_KEY,
@@ -112,8 +94,9 @@ class GeminiLiveBrain:
                 asyncio.create_task(self._send_text_loop(), name="send_text"),
                 asyncio.create_task(self._receive(), name="receive"),
             ]
-            if self._get_frame:
+            if self._video and self._video.enabled:
                 tasks.append(asyncio.create_task(self._send_video(), name="send_video"))
+                self._on_log("camera stream enabled")
 
             try:
                 done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_EXCEPTION)
@@ -147,21 +130,14 @@ class GeminiLiveBrain:
             )
 
     async def _send_video(self):
-        # Sample the core's latest frame at a low rate — the display already
-        # gets the full-rate feed from the camera pump; Gemini just needs a
-        # periodic glance.
-        interval = 1.0 / max(0.1, VIDEO_GEMINI_FPS)
-        last_sent = None
-        while True:
+        # The display gets its own high-fps feed in the core; here we sip
+        # frames at VIDEO_GEMINI_FPS to keep the Live upload light.
+        async for jpeg in self._video.frames(VIDEO_GEMINI_FPS):
             if self._session is None:
                 return
-            jpeg = self._get_frame() if self._get_frame else None
-            if jpeg is not None and jpeg is not last_sent:
-                last_sent = jpeg
-                await self._session.send_realtime_input(
-                    video=types.Blob(data=jpeg, mime_type="image/jpeg"),
-                )
-            await asyncio.sleep(interval)
+            await self._session.send_realtime_input(
+                video=types.Blob(data=jpeg, mime_type="image/jpeg"),
+            )
 
     async def _receive(self):
         assert self._session is not None

@@ -30,17 +30,13 @@ Crucially, the architecture is designed as a **ROS 2 Jazzy migration path**. The
 - **How it works:** Capturing video in the main thread blocks asyncio loops. Thus, a dedicated `FrameBroker` multiprocessing worker captures frames using OpenCV (forcing MJPG codec and a 1-frame buffer to prevent stale frame lag). 
 - **Shared Memory:** The broker writes frames to a RAM-backed shared memory block guarded by a sequence lock (Seqlock). This allows multiple independent processes (the Gemini uploader, the UI streamer, and the Face worker) to read the freshest frame simultaneously without IPC overhead or blocking.
 
-### E. Merged Vision Pipeline & Gemini Live Native Multimodality
-- **How it works:** Previously separate, the vision pipeline is now natively merged with the Gemini Live session in `brain_live.py`. While the UI receives a high-FPS stream for smooth rendering, the Gemini session concurrently sips JPEG frames from the exact same shared memory broker at a throttled rate (`VIDEO_GEMINI_FPS`, typically ~1 fps).
-- **Native Grounding:** These frames are sent directly via `session.send_realtime_input(video=...)` into the model's multimodal context. The model uses this native vision to ground its tool calls, allowing it to accurately compute camera-frame coordinates `(x, y, z)` for the `execute_robot_action` tool without requiring external object-detection prompts for known objects.
-
-### F. Parallel Face Identification & Context Injection
-- **How it works:** A separate multiprocessing worker (`FaceIDWorker`) uses `insightface` (buffalo_l models) to analyze the shared memory frames in parallel. 
+### E. Parallel Face Identification & Context Injection
+- **How it works:** A separate multiprocessing worker (`FaceIDWorker`) uses `insightface` (buffalo_l models) to analyze the shared memory frames. 
 - **High-Freq Stream:** Sends bounding box data rapidly via IPC queue for the UI to draw overlays.
-- **Low-Freq Stream (Roster):** Maintains a state machine of who is currently in the room. When someone arrives or leaves, it pushes a roster event to the main process.
-- **Context Injection:** The main process quietly injects a text message into the Gemini Live session (e.g., `[VISION] John has arrived.`). The system prompt instructs the LLM not to narrate these tags mechanically, but to seamlessly incorporate the knowledge into the natural conversation alongside its native video feed.
+- **Low-Freq Stream (Roster):** Maintains a state machine of who is currently in the room (with grace periods for tracking drops). When someone arrives or leaves, it pushes a roster event to the main process.
+- **Context Injection:** The main process takes the roster event and quietly injects a text message into the Gemini Live session (e.g., `[VISION] John has arrived.`). The system prompt instructs the LLM not to narrate these tags mechanically, but to seamlessly incorporate the knowledge into the natural conversation.
 
-### G. Hardware Bridge
+### F. Hardware Bridge
 - **How it works:** An optional `HardwareBridge` class connects via `pyserial` to an ESP32 microcontroller at 115200 baud. Every tool call executed by the backend is serialized into a compact JSON line and mirrored to the serial port. The firmware (`nexabot_firmware.ino`) can parse this JSON to drive physical motors.
 
 ---

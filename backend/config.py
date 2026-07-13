@@ -31,14 +31,6 @@ def _load_env() -> None:
 
 _load_env()
 
-
-def _path_from_env(name: str, default: Path) -> Path:
-    raw = os.environ.get(name)
-    if not raw:
-        return default
-    path = Path(raw)
-    return path if path.is_absolute() else _ROOT / path
-
 # ---------------------------------------------------------------
 # Gemini Live (primary brain)
 # ---------------------------------------------------------------
@@ -76,13 +68,13 @@ VIDEO_WIDTH        = 640
 VIDEO_HEIGHT       = 480
 VIDEO_JPEG_QUALITY = 70
 
-# Three decoupled frame rates (a single shared rate used to buffer badly):
+# Three decoupled frame rates (the single 1-fps feed used to buffer badly):
 #   CAPTURE — how fast the broker pulls from the webcam into shared memory.
 #             Keep high so frames stay fresh and OpenCV's internal buffer never
-#             backs up (stale-frame lag). Cheap: no encoding here.
+#             backs up (stale-frame lag). This is cheap: no encoding here.
 #   DISPLAY — smooth on-screen preview to the 8" display client.
-#   GEMINI  — frames sampled up to the Live API. Keep LOW on purpose: every
-#             frame costs tokens/bandwidth and the model doesn't need 20 fps.
+#   GEMINI  — frames sent up to the Live API. Keep LOW on purpose: every frame
+#             costs tokens/bandwidth and the model doesn't need 20 fps.
 VIDEO_CAPTURE_FPS  = int(os.environ.get("VIDEO_CAPTURE_FPS", "30"))
 VIDEO_DISPLAY_FPS  = int(os.environ.get("VIDEO_DISPLAY_FPS", "20"))
 VIDEO_GEMINI_FPS   = float(os.environ.get("VIDEO_GEMINI_FPS", "1"))
@@ -100,16 +92,13 @@ SERIAL_PORT = os.environ.get("SERIAL_PORT") or None
 SERIAL_BAUD = int(os.environ.get("SERIAL_BAUD", "115200"))
 
 # ---------------------------------------------------------------
-# Face ID / presence worker
+# Face ID Configurations
 # ---------------------------------------------------------------
-FACE_MATCH_THRESHOLD = float(os.environ.get("FACE_MATCH_THRESHOLD", "0.45"))
+FACE_MATCH_THRESHOLD = 0.38
 TRACK_DEBOUNCE_FRAMES = 8
 TRACK_GRACE_PERIOD_SEC = 3.5
 EMBEDDING_RECOMPUTE_INTERVAL = 7
 MAX_ROSTER_PING_RATE = 2.0
-FACE_MEMORY_DIR = _path_from_env("FACE_MEMORY_DIR", _ROOT / "backend" / "face_memory")
-FACE_MAX_DESCRIPTORS = int(os.environ.get("FACE_MAX_DESCRIPTORS", "5"))
-FACE_COMMAND_TIMEOUT_SEC = float(os.environ.get("FACE_COMMAND_TIMEOUT_SEC", "5"))
 # Detection input size for the face worker. 640 is accurate but slow on CPU
 # (~0.4 fps); 320 roughly quadruples throughput and is plenty for webcam-range
 # faces. Bump back up if you have a CUDA GPU.
@@ -155,15 +144,7 @@ For navigate_to / task targets that are known locations, prefer the WORLD FRAME 
   - description: one-line natural-language goal ("bring the water bottle to the couch").
   - target_coordinates: WORLD frame if a location is known — {world_x, world_y} in meters; omit if the target is a person or unknown position.
   - priority: "low" | "normal" | "high".
-
-### PEOPLE, NAMES & MEMORY
-A local face-recognition worker is your sense of identity. It sends text context like "[VISION] An unfamiliar person is in view" or "[VISION] Shyam has arrived." Rules:
-1. Identity comes only from the vision worker. Never guess or pretend to recognize someone without it.
-2. If an unfamiliar person is in view, greet them warmly, ask for their name, and ask how to spell it if the name is ambiguous or unusual.
-3. Once the unfamiliar person tells you their name, immediately call remember_person(name) while their face is still visible. Then greet them by name.
-4. If a known person arrives, greet them by name briefly and naturally. Use remembered notes only if they fit.
-5. If the visible person shares a durable personal fact, call remember_fact(fact) quietly. Do not announce database or storage details.
-6. If someone asks to be forgotten, confirm and call forget_person(name).
+- get_visible_people(): Get an authoritative snapshot of who is currently visible. Call this before greeting someone, referring to who is in the room, or whenever asked.
 
 ### COGNITIVE RULES
 1. NATIVE VISUAL GROUNDING: When someone says "look at the red cup", find it in your video, compute camera-frame (x, y) + depth (z), then call execute_robot_action with "look_at". Never invent coordinates for something you can't see.
@@ -172,4 +153,7 @@ A local face-recognition worker is your sense of identity. It sends text context
 4. SPATIAL LIMITS: Don't grasp anything with z > 1.5 m — navigate closer first, then grasp.
 5. SAFETY BUBBLE: If something gets closer than 20 cm to your lens, stop, move_robot("backward", 30), and say something natural.
 6. HONESTY OVER HALLUCINATION: If you can't see the requested thing or the audio was unclear, say so and ask for a better angle. Never fake coordinates.
+
+### ENVIRONMENTAL CONTEXT
+You will occasionally receive tagged text inputs (e.g. "[VISION] John has arrived"). These are automated environmental context, not spoken words. DO NOT mechanically narrate them or say "I see that John has arrived." Instead, use them naturally — e.g. smoothly greeting John by name when he arrives, or noting his presence if relevant.
 """.strip()

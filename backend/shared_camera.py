@@ -34,7 +34,7 @@ class FrameBroker:
         self.shm = None
         self._cap = None
         self._cv2 = None
-
+        
         try:
             import cv2
             self._cv2 = cv2
@@ -81,15 +81,15 @@ class FrameBroker:
                 ret, frame = cap.read()
                 if ret:
                     h, w, _ = frame.shape
-
+                    
                     # Seqlock writer: odd means writing
                     seq += 1
                     struct.pack_into(HEADER_FMT, self.shm.buf, 0, seq, w, h)
-
+                    
                     # Copy pixels
                     frame_bytes = frame.tobytes()
                     self.shm.buf[HEADER_SIZE:HEADER_SIZE + len(frame_bytes)] = frame_bytes
-
+                    
                     # Seqlock writer: even means finished
                     seq += 1
                     struct.pack_into(HEADER_FMT, self.shm.buf, 0, seq, w, h)
@@ -126,19 +126,19 @@ class FrameReader:
 
         for _ in range(5):  # Max retries
             seq, w, h = struct.unpack_from(HEADER_FMT, self.shm.buf, 0)
-
+            
             if seq % 2 != 0:
                 # Writer is currently writing, wait
                 time.sleep(0.001)
                 continue
-
+                
             if seq == self.last_seq:
                 # No new frame
                 return None
 
             frame_size = w * h * 3
             frame_bytes = bytes(self.shm.buf[HEADER_SIZE:HEADER_SIZE + frame_size])
-
+            
             seq_after, _, _ = struct.unpack_from(HEADER_FMT, self.shm.buf, 0)
             if seq != seq_after:
                 # Torn read, retry

@@ -22,73 +22,56 @@
       </div>
       <div class="brand-text">
         <div class="brand-name">Robot</div>
-        <div class="brand-sub">Cognitive Core · Python backend · display client</div>
       </div>
     </div>
     <div class="topbar-actions">
       <div class="status-pill" id="statusPill" data-state="offline">
         <span class="dot"></span><span id="statusText">Offline</span>
       </div>
-      <div class="status-pill" id="linkPill" data-state="error" title="Backend link">
-        <span class="dot"></span><span id="linkText">Backend…</span>
+      <div class="status-pill" id="linkPill" data-state="error" title="Mic + camera">
+        <span class="dot"></span><span id="linkText">Media off</span>
       </div>
-      <button id="cameraBtn" class="btn ghost">Camera On</button>
-      <button id="muteBtn"  class="btn ghost">Mute</button>
       <button id="powerBtn" class="btn primary">Power On</button>
     </div>
   </header>
 
   <main class="workspace">
 
-    <!-- TOP: Robot Vision -->
-    <section class="card vision-hero">
-      <div class="card-head">
-        <div class="card-title">Robot Vision</div>
-        <div class="card-sub">streamed from the Python core · 1 fps</div>
-      </div>
-      <div class="camera-wrap">
-        <img id="cameraFrame" alt="" />
-        <canvas id="cameraOverlay" width="640" height="480"></canvas>
-        <div class="camera-idle" id="cameraIdle">camera offline</div>
-      </div>
-    </section>
-
-    <div class="workspace-grid">
-      <!-- LEFT: conversation -->
-      <aside class="col left">
-        <section class="card conversation-card">
-          <div class="card-head">
-            <div class="card-title">Conversation</div>
-            <div class="card-sub">live transcript · you &amp; the robot</div>
-          </div>
-          <div class="log clean" id="transcript"></div>
-          <div class="chat-row">
-            <input id="textInput" type="text" placeholder="Type instead of talking…" />
-            <button id="textSend" class="btn primary compact">Send</button>
-          </div>
-        </section>
-      </aside>
-
-      <!-- RIGHT: audio pulse -->
-      <aside class="col right">
-        <section class="card audio-card">
-          <div class="card-head">
-            <div class="card-title">Audio Stream</div>
-            <div class="card-sub">voice frequency pulses</div>
-          </div>
-          <div class="audio-pulse-wrap">
-            <div class="mic-meter"><div id="micMeterFill"></div></div>
-            <div class="speaking-indicator">
-              <span class="speaking" id="speakingDot" title="Robot speaking">◉</span>
-              <span>Robot is speaking...</span>
-            </div>
-          </div>
-        </section>
-      </aside>
+    <!-- LEFT: CAMERA (what the robot sees) -->
+    <div class="full-cam-container">
+      <video id="cameraFeed" autoplay playsinline muted></video>
+      <canvas id="cameraOverlay" width="640" height="480"></canvas>
+      <div class="camera-idle" id="cameraIdle">camera offline</div>
     </div>
+
+    <!-- RIGHT: ROBOT FACE (LED dot-matrix, emotes with the voice) -->
+    <div class="face-container">
+      <canvas id="robotFace"></canvas>
+    </div>
+
+    <!-- VISIBLE TRANSCRIPT OVERLAY -->
+    <div id="transcript"></div>
 
   </main>
 
-  <script src="js/display.js"></script>
+  <!-- HIDDEN UTILITIES (kept in DOM to prevent breaking main.js orchestrator) -->
+  <div class="hidden">
+    <span id="speakingDot"></span>
+    <button id="muteBtn"></button>
+    <button id="textSend"></button>
+    <input id="textInput" />
+    <div id="taskList"></div>
+    <div id="actionLog"></div>
+    <canvas id="simCanvas" width="620" height="620"></canvas>
+    <span id="coordWorld"></span>
+    <span id="coordHeading"></span>
+    <span id="coordCam"></span>
+    <span id="coordWorldTarget"></span>
+    <span id="statGripper"></span>
+    <span id="statCurrentTask"></span>
+    <span id="statVisitor"></span>
+  </div>
+
+  <script type="module" src="src/main.js"></script>
 </body>
 </html>

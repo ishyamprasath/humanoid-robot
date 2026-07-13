@@ -4,9 +4,7 @@ Camera feed — the robot's eyes.
 Reads raw BGR frames from shared memory (populated by the FrameBroker),
 encodes them to JPEG, and yields them at a caller-chosen rate. Frames go
 two places at different rates: out to the display client (smooth) and up
-to Gemini as vision input (sipped slowly). Because the source is shared
-memory, several CameraFeed readers can run at once without contending for
-the physical device — that lives in the broker process.
+to Gemini as vision input (sipped slowly).
 """
 
 from __future__ import annotations
@@ -28,7 +26,7 @@ class CameraFeed:
             import cv2  # type: ignore
         except ImportError:
             return
-
+            
         self._cv2 = cv2
         self._reader = FrameReader()
         self.enabled = True
@@ -46,7 +44,7 @@ class CameraFeed:
         cv2 = self._cv2
         interval = 1.0 / max(0.1, fps)
         loop = asyncio.get_running_loop()
-
+        
         try:
             while self.enabled and self._reader is not None:
                 # read_latest checks for torn reads and reads from shared memory

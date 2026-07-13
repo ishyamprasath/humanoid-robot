@@ -1,0 +1,23 @@
+# dependency directories
+node_modules/
+
+# build directories
+dist/
+
+# cache directories
+.vite/
+__pycache__/
+*.pyc
+.DS_Store
+
+# local env files
+.env
+.env.local
+.env.*.local
+
+# session logs
+session-2026*
+conv-log/
+actions-log/
+task-log/
+

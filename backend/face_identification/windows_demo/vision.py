@@ -9,7 +9,7 @@ class Tracker:
         self.disappeared = {} # id -> count
         self.max_disappeared = max_disappeared
         self.max_distance = max_distance
-
+        
     def update(self, rects):
         if len(rects) == 0:
             for object_id in list(self.disappeared.keys()):
@@ -80,55 +80,55 @@ class VisionEngine:
         self.app = face_app
         self.gallery = gallery
         self.tracker = Tracker(max_disappeared=10, max_distance=100)
-        self.track_identities = {}
+        self.track_identities = {} 
         self.unknown_counter = 0
 
     def process_frame(self, frame):
         faces = self.app.get(frame)
-
+        
         rects = []
         for face in faces:
             rects.append(face.bbox.astype(int))
-
+            
         objects = self.tracker.update(rects)
-
+        
         results = []
-
+        
         lost_tracks = set(self.track_identities.keys()) - set(objects.keys())
         for tid in lost_tracks:
             if self.track_identities[tid]["is_unknown"]:
                 log_event(f"Unknown track {self.track_identities[tid]['name']} left frame.")
             del self.track_identities[tid]
-
+            
         for face, bbox in zip(faces, rects):
             cX = int((bbox[0] + bbox[2]) / 2.0)
             cY = int((bbox[1] + bbox[3]) / 2.0)
-
+            
             matched_tid = None
             for tid, centroid in objects.items():
                 if np.linalg.norm(np.array([cX, cY]) - np.array(centroid)) < 50:
                     matched_tid = tid
                     break
-
+                    
             if matched_tid is None:
                 continue
-
+                
             run_recognition = False
             if matched_tid not in self.track_identities:
                 run_recognition = True
             elif self.track_identities[matched_tid]["is_unknown"]:
                 run_recognition = True
-
+                
             if run_recognition:
                 name, title, sim = self.gallery.recognize(face.normed_embedding, threshold=0.45)
-
+                
                 if name is not None:
                     display_name = f"[{title}] {name}" if title else name
                     if matched_tid in self.track_identities and self.track_identities[matched_tid]["is_unknown"]:
                         log_event(f"Resolved {self.track_identities[matched_tid]['name']} -> {display_name} (conf: {sim:.2f})")
                     elif matched_tid not in self.track_identities:
                         log_event(f"Recognized {display_name} (conf: {sim:.2f})")
-
+                    
                     self.track_identities[matched_tid] = {"name": display_name, "confidence": sim, "is_unknown": False}
                 else:
                     if matched_tid not in self.track_identities:
@@ -138,12 +138,12 @@ class VisionEngine:
                     else:
                         if sim > self.track_identities[matched_tid]["confidence"]:
                              self.track_identities[matched_tid]["confidence"] = sim
-
+                             
                              if sim > 0.40:
                                  log_warning(f"Borderline match for {self.track_identities[matched_tid]['name']}: sim={sim:.2f}")
 
             track_info = self.track_identities.get(matched_tid, {"name": "Processing", "confidence": 0, "is_unknown": True})
-
+            
             results.append({
                 'box': bbox,
                 'name': track_info["name"],
@@ -151,5 +151,5 @@ class VisionEngine:
                 'track_id': matched_tid,
                 'is_unknown': track_info["is_unknown"]
             })
-
+            
         return results

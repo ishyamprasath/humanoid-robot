@@ -16,10 +16,29 @@ __pycache__/
 
 # logs
 *.log
-*.err
 
-# local face memory (embeddings + personal notes, never commit)
-backend/face_memory/
+# editor / OS
+.DS_Store
+Thumbs.db
+.vscode/
+# secrets
+.env
+.env.local
+.env.*.local
+
+# node
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+
+# logs
+*.log
 
 # editor / OS
 .DS_Store
@@ -29,8 +48,23 @@ Thumbs.db
 
 # local vendor bundles
 nexabot/.vendor/
-Tech_Summary.md
-start.bat
-start.bat
-Tech_Summary.md
-Tech_Summary.md
+Project_Summary.md
+
+# Ignored face identification documentation
+backend/face_identification/FaceID_Gemini_merge.md
+backend/face_identification/face_id_windows_demo_plan.md
+backend/face_identification/robo-README.md
+backend/face_identification/vision_project_summary.md
+
+# Startup scripts
+start_robot.bat
+
+# Session log files and directories
+session-2026*
+conv-log/
+actions-log/
+task-log/
+**/conv-log/
+**/actions-log/
+**/task-log/
+

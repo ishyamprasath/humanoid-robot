@@ -81,6 +81,7 @@
 /* ─────────── Base ─────────── */
 
 html, body {
+  height: 100%;
   min-height: 100vh;
   background: var(--bg);
   color: var(--text);
@@ -98,6 +99,7 @@ html, body {
 body {
   display: flex;
   flex-direction: column;
+  height: 100vh;
   background:
     radial-gradient(1200px 500px at 82% -8%,  rgba(79, 70, 229, 0.06), transparent 62%),
     radial-gradient(900px 400px at -8% 105%,  rgba(180, 83, 9, 0.045), transparent 62%),
@@ -299,32 +301,75 @@ button { border: 0; background: none; cursor: pointer; }
 
 .workspace {
   display: flex;
-  flex-direction: column;
-  gap: 20px;
-  padding: 20px 28px 32px;
-  flex: 1;
+  flex-direction: row;          /* two equal columns: camera | robot face */
+  flex: 1;                      /* fill all remaining height in the body flex column */
+  min-height: 0;                /* allow flex child to shrink below content size */
+  overflow: hidden;
+  position: relative;
+  background: #09090b;
 }
-
-.workspace-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 20px;
-}
-
-.vision-hero .camera-wrap {
-  aspect-ratio: auto;
-  height: 75vh;
-  min-height: 500px;
-}
-.vision-hero .camera-wrap img,
-.vision-hero .camera-wrap canvas {
-  object-fit: contain;
+.workspace > .full-cam-container,
+.workspace > .face-container {
+  flex: 1 1 0;                  /* each column takes exactly half */
+  min-width: 0;
 }
 .col {
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-  min-width: 0;
+  display: none; /* hidden columns in full screen view */
+}
+
+/* ─────────── Full Screen Camera ─────────── */
+
+.full-cam-container {
+  position: relative;
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  background: #09090b;
+  overflow: hidden;
+}
+.full-cam-container video,
+.full-cam-container canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.full-cam-container::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  box-shadow: inset 0 0 80px rgba(0, 0, 0, 0.4);
+}
+
+/* ─────────── Robot Face (LED dot-matrix) ─────────── */
+
+.face-container {
+  position: relative;
+  height: 100%;
+  background: #050505;                 /* the "display panel" */
+  border-left: 1px solid var(--border);
+  overflow: hidden;
+}
+.face-container #robotFace {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.face-container::after {                /* subtle glass/vignette over the LEDs */
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  box-shadow: inset 0 0 120px rgba(0, 0, 0, 0.75);
+}
+
+/* Narrow screens: stack camera over face instead of side by side */
+@media (max-width: 760px) {
+  .workspace { flex-direction: column; }
+  .face-container { border-left: none; border-top: 1px solid var(--border); }
 }
 
 /* ─────────── Cards ─────────── */
@@ -480,41 +525,6 @@ button { border: 0; background: none; cursor: pointer; }
 }
 @keyframes speakingPulse { 50% { transform: scale(1.35); } }
 
-/* ─────────── Conversation & Audio Cards ─────────── */
-
-.conversation-card, .audio-card {
-  flex: 1;
-}
-.conversation-card .log {
-  height: 300px;
-}
-
-.audio-pulse-wrap {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  align-items: center;
-  gap: 30px;
-  padding: 40px;
-}
-.audio-card .mic-meter {
-  width: 100%;
-  height: 48px;
-  border-radius: var(--r-full);
-}
-.audio-card .speaking-indicator {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  font-size: 16px;
-  color: var(--text-muted);
-  font-weight: 500;
-}
-.audio-card .speaking-indicator .speaking {
-  font-size: 24px;
-}
-
 /* ─────────── Coordinates ─────────── */
 
 .coord-block {
@@ -665,7 +675,6 @@ button { border: 0; background: none; cursor: pointer; }
 .log .line {
   padding: 3px 0;
   word-wrap: break-word;
-  white-space: pre-wrap;
   animation: lineIn 0.28s var(--ease-out) both;
 }
 .log .line b {
@@ -826,21 +835,16 @@ button { border: 0; background: none; cursor: pointer; }
 
 @media (max-width: 1280px) {
   .workspace {
+    grid-template-columns: 320px minmax(0, 1fr);
     gap: 16px;
     padding: 16px 20px 24px;
-  }
-  .workspace-grid {
-    grid-template-columns: 1fr 1fr;
-    gap: 16px;
   }
   .col.right { grid-column: 1 / -1; grid-row: 2; }
 }
 @media (max-width: 900px) {
   .workspace {
-    padding: 14px;
-  }
-  .workspace-grid {
     grid-template-columns: 1fr;
+    padding: 14px;
   }
   .col.right { grid-column: auto; grid-row: auto; }
   .topbar {
@@ -862,4 +866,59 @@ button { border: 0; background: none; cursor: pointer; }
   .topbar { flex-direction: column; align-items: stretch; }
   .topbar-actions { justify-content: space-between; }
   .metrics { grid-template-columns: 1fr; }
+}
+
+/* Floating Transcript Style */
+#transcript {
+  position: absolute;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 100;
+  width: 90%;
+  max-width: 650px;
+  height: 120px;
+  background: rgba(9, 9, 11, 0.75);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: var(--r-md);
+  padding: 14px 16px;
+  overflow-y: auto;
+  backdrop-filter: blur(10px);
+  color: #fff;
+  font-family: var(--font-sans);
+  font-size: 13.5px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  scroll-behavior: smooth;
+}
+
+#transcript::-webkit-scrollbar {
+  width: 6px;
+}
+
+#transcript::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.18);
+  border-radius: var(--r-full);
+}
+
+#transcript .line {
+  margin-bottom: 2px;
+  line-height: 1.5;
+  animation: lineIn 0.24s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+#transcript .line b {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin-right: 6px;
+}
+
+#transcript .line.user b {
+  color: #818cf8; /* Light Indigo */
+}
+
+#transcript .line.bot b {
+  color: #34d399; /* Emerald Green */
 }

@@ -7,7 +7,7 @@ LOG_FILE = "demo.log"
 def setup_logger():
     logger = logging.getLogger("FaceDemo")
     logger.setLevel(logging.INFO)
-
+    
     if not logger.handlers:
         # File handler
         fh = RotatingFileHandler(LOG_FILE, maxBytes=2*1024*1024, backupCount=3)
@@ -15,7 +15,7 @@ def setup_logger():
         formatter = logging.Formatter('%(asctime)s %(levelname)-8s %(message)s', datefmt='%H:%M:%S')
         fh.setFormatter(formatter)
         logger.addHandler(fh)
-
+        
         # Console handler
         ch = logging.StreamHandler()
         ch.setLevel(logging.INFO)
