@@ -289,6 +289,7 @@ if os.path.exists(DIST_DIR) and os.path.exists(os.path.join(DIST_DIR, "index.htm
         with open(os.path.join(DIST_DIR, "index.html"), "r", encoding="utf-8") as f:
             return f.read()
     app.mount("/assets", StaticFiles(directory=os.path.join(DIST_DIR, "assets")), name="assets")
+    app.mount("/models", StaticFiles(directory=os.path.join(DIST_DIR, "models")), name="models")
 else:
     print("[Server] 'dist/' directory not found. Serving directly from source files (development fallback)")
     @app.get("/", response_class=HTMLResponse)
@@ -302,6 +303,8 @@ else:
     app.mount("/src", StaticFiles(directory=os.path.join(ROOT_DIR, "src")), name="src")
     app.mount("/css", StaticFiles(directory=os.path.join(ROOT_DIR, "css")), name="css")
     app.mount("/public", StaticFiles(directory=os.path.join(ROOT_DIR, "public")), name="public")
+    app.mount("/models", StaticFiles(directory=os.path.join(ROOT_DIR, "public", "models")), name="models")
+
 
 if __name__ == "__main__":
     import uvicorn
