@@ -49,43 +49,28 @@
       <canvas id="robotFace"></canvas>
     </div>
 
-    <!-- HIDDEN UTILITIES (kept in DOM to prevent breaking main.js orchestrator) -->
-    <div class="hidden">
-      <span id="speakingDot"></span>
-      <button id="muteBtn"></button>
-      <button id="textSend"></button>
-      <input id="textInput" />
-      <div id="transcript"></div>
-      <div id="taskList"></div>
-      <div id="actionLog"></div>
-      <canvas id="simCanvas" width="620" height="620"></canvas>
-      <span id="coordWorld"></span>
-      <span id="coordHeading"></span>
-      <span id="coordCam"></span>
-      <span id="coordWorldTarget"></span>
-      <span id="statGripper"></span>
-      <span id="statCurrentTask"></span>
-      <span id="statVisitor"></span>
-    </div>
-
-    <!-- EXPRESSION TEST CONTROLS -->
-    <div id="expressionControls" style="position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; z-index: 100; background: rgba(0,0,0,0.7); padding: 12px; border-radius: 8px; max-width: 90%;">
-      <button class="btn" data-expr="neutral">Neutral</button>
-      <button class="btn" data-expr="happy">Happy</button>
-      <button class="btn" data-expr="curious">Curious</button>
-      <button class="btn" data-expr="thinking">Thinking</button>
-      <button class="btn" data-expr="surprised">Surprised</button>
-      <button class="btn" data-expr="sad">Sad</button>
-      <button class="btn" data-expr="love">Love</button>
-      <button class="btn" data-expr="sleepy">Sleepy</button>
-      <button class="btn" data-expr="angry">Angry</button>
-      <button class="btn" data-expr="confused">Confused</button>
-      <button class="btn" data-expr="cheeky">Cheeky</button>
-      <button class="btn" data-expr="bored">Bored</button>
-      <button class="btn" data-expr="scared">Scared</button>
-    </div>
+    <!-- VISIBLE TRANSCRIPT OVERLAY -->
+    <div id="transcript"></div>
 
   </main>
+
+  <!-- HIDDEN UTILITIES (kept in DOM to prevent breaking main.js orchestrator) -->
+  <div class="hidden">
+    <span id="speakingDot"></span>
+    <button id="muteBtn"></button>
+    <button id="textSend"></button>
+    <input id="textInput" />
+    <div id="taskList"></div>
+    <div id="actionLog"></div>
+    <canvas id="simCanvas" width="620" height="620"></canvas>
+    <span id="coordWorld"></span>
+    <span id="coordHeading"></span>
+    <span id="coordCam"></span>
+    <span id="coordWorldTarget"></span>
+    <span id="statGripper"></span>
+    <span id="statCurrentTask"></span>
+    <span id="statVisitor"></span>
+  </div>
 
   <script type="module" src="src/main.js"></script>
 </body>

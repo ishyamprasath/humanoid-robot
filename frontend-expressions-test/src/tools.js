@@ -167,6 +167,7 @@ export function buildTools() {
                 enum: [
                   "neutral", "happy", "excited", "curious",
                   "thinking", "surprised", "sad", "love", "sleepy",
+                  "angry", "confused", "cheeky", "bored", "scared", "sassy",
                 ],
               },
             },

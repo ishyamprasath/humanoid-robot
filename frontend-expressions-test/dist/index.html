@@ -3,10 +3,10 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Robot · Cognitive Core</title>
+  <title>Robot · Cognitive Core</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🤖</text></svg>" />
-  <script type="module" crossorigin src="/assets/index-D0lsu8x8.js"></script>
-  <link rel="stylesheet" crossorigin href="/assets/index-DBXX7Gz0.css">
+  <script type="module" crossorigin src="/assets/index-CkpwpqJo.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-BvgoxPpD.css">
 </head>
 <body>
 
@@ -45,31 +45,33 @@
       <div class="camera-idle" id="cameraIdle">camera offline</div>
     </div>
 
-    <!-- RIGHT: ROBOT FACE (Anam AI Video Avatar) -->
+    <!-- RIGHT: ROBOT FACE (LED dot-matrix, emotes with the voice) -->
     <div class="face-container">
-      <video id="robotFaceVideo" autoplay playsinline style="width: 100%; height: 100%; object-fit: cover;"></video>
+      <canvas id="robotFace"></canvas>
     </div>
 
-    <!-- HIDDEN UTILITIES (kept in DOM to prevent breaking main.js orchestrator) -->
-    <div class="hidden">
-      <span id="speakingDot"></span>
-      <button id="muteBtn"></button>
-      <button id="textSend"></button>
-      <input id="textInput" />
-      <div id="transcript"></div>
-      <div id="taskList"></div>
-      <div id="actionLog"></div>
-      <canvas id="simCanvas" width="620" height="620"></canvas>
-      <span id="coordWorld"></span>
-      <span id="coordHeading"></span>
-      <span id="coordCam"></span>
-      <span id="coordWorldTarget"></span>
-      <span id="statGripper"></span>
-      <span id="statCurrentTask"></span>
-      <span id="statVisitor"></span>
-    </div>
+    <!-- VISIBLE TRANSCRIPT OVERLAY -->
+    <div id="transcript"></div>
 
   </main>
-
+
+  <!-- HIDDEN UTILITIES (kept in DOM to prevent breaking main.js orchestrator) -->
+  <div class="hidden">
+    <span id="speakingDot"></span>
+    <button id="muteBtn"></button>
+    <button id="textSend"></button>
+    <input id="textInput" />
+    <div id="taskList"></div>
+    <div id="actionLog"></div>
+    <canvas id="simCanvas" width="620" height="620"></canvas>
+    <span id="coordWorld"></span>
+    <span id="coordHeading"></span>
+    <span id="coordCam"></span>
+    <span id="coordWorldTarget"></span>
+    <span id="statGripper"></span>
+    <span id="statCurrentTask"></span>
+    <span id="statVisitor"></span>
+  </div>
+
 </body>
 </html>

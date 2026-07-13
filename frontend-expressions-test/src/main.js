@@ -8,8 +8,6 @@
 // the Robot world model. One process, one network hop.
 // ============================================================
 
-import { GoogleGenAI, Modality } from "@google/genai";
-import { MicCapture, SpeakerPlayer } from "./audio.js";
 import {
   API_KEY, CAMERA_HFOV, MAX_RETRIES, MODEL, MODEL_FRAME_FPS,
   MODEL_FRAME_JPEG_QUALITY, MODEL_FRAME_WIDTH, REGREET_COOLDOWN_MS,
@@ -20,6 +18,8 @@ import { FaceEngine } from "./faces.js";
 import { PeopleStore } from "./people-store.js";
 import { Robot } from "./robot.js";
 import { buildTools } from "./tools.js";
+import { GoogleGenAI, Modality } from "@google/genai";
+import { MicCapture, SpeakerPlayer } from "./audio.js";
 
 const $ = (id) => document.getElementById(id);
 const els = {
@@ -78,11 +78,28 @@ const face = {
   nextBlink: 0,
 };
 
+// Clean up hot-reloaded stale instances
+if (window.activeWebSocket) {
+    console.log("🔌 Closing stale hot-reloaded WebSocket...");
+    try { window.activeWebSocket.close(); } catch(e){}
+}
+if (window.activeSpeechRecognition) {
+    console.log("🎙️ Stopping stale hot-reloaded SpeechRecognition...");
+    try { window.activeSpeechRecognition.stop(); } catch(e){}
+}
+
+let ws = null;
+let sttRec = null;
 let ai = null;
-let session = null;        // live Gemini session (null when off)
-let sessionGen = 0;        // guards stale callbacks after power-off
+let session = null;
 let mic = null;
 let player = null;
+const synth = window.speechSynthesis;
+let sessionGen = 0;        // guards stale callbacks after power-off
+let isSttProcessing = false;
+let audioCtx = null;       // Reusable AudioContext to avoid Chrome limit errors
+
+
 let camStream = null;
 let frameTimer = null;
 let retries = 0;
@@ -259,10 +276,9 @@ function timeContext() {
 
 function sendContext(text, complete) {
   try {
-    session?.sendClientContent({
-      turns: [{ role: "user", parts: [{ text }] }],
-      turnComplete: complete,
-    });
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'text', text: text }));
+    }
   } catch {}
 }
 
@@ -439,20 +455,351 @@ function startFrameUpload(gen) {
 }
 
 // ----------------------------------------------------------
-// Gemini Live session
+// Local LLM & Web Speech Integration
 // ----------------------------------------------------------
-async function powerOn() {
-  if (session || state.powerOn) return;
-  if (!API_KEY) {
-    setStatus("error", "VITE_GEMINI_API_KEY missing — copy .env.example to .env");
-    logAction("VITE_GEMINI_API_KEY missing in frontend/.env");
-    return;
-  }
 
-  // Initialize new logging session ID
-  const pad = (n) => String(n).padStart(2, "0");
-  const d = new Date();
-  currentSessionId = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+function initSpeechRecognition(wsRef) {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+        console.error("SpeechRecognition not supported in this browser");
+        logAction("SpeechRecognition not supported");
+        return null;
+    }
+    const rec = new SpeechRecognition();
+    rec.continuous = true;
+    rec.interimResults = true;
+    rec.lang = 'en-US';
+
+    let silenceTimer = null;
+    let latestTranscript = '';
+
+    rec.onstart = () => {
+        console.log("🎙️ Speech recognition active");
+        logAction("microphone hot");
+        isSttProcessing = false;
+        latestTranscript = '';
+    };
+
+    rec.onerror = (e) => {
+        console.error("🎙️ Speech recognition error:", e.error);
+        logAction(`mic error: ${e.error}`);
+    };
+
+    rec.onend = () => {
+        console.log("🎙️ Speech recognition disconnected");
+        if (silenceTimer) clearTimeout(silenceTimer);
+        // Auto-restart if ws is open, not muted, and we are NOT currently processing or speaking
+        if (ws && ws.readyState === WebSocket.OPEN && !state.muted && !isSttProcessing && !state.speaking) {
+            console.log("🎙️ Restarting Speech recognition...");
+            try { rec.start(); } catch(err) {
+                console.error("Failed to restart speech recognition:", err);
+            }
+        } else {
+            logAction("microphone off");
+        }
+    };
+
+    rec.onresult = (event) => {
+        if (isSttProcessing) return; // Ignore input if already processing
+        
+        let final = '';
+        let interim = '';
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+            if (event.results[i].isFinal) {
+                final += event.results[i][0].transcript;
+            } else {
+                interim += event.results[i][0].transcript;
+            }
+        }
+        
+        let currentText = final || interim;
+        if (currentText) {
+            latestTranscript = currentText.trim();
+        }
+
+        // Reset the silence timer
+        if (silenceTimer) clearTimeout(silenceTimer);
+        
+        if (latestTranscript && wsRef && wsRef.readyState === WebSocket.OPEN && !state.muted) {
+            silenceTimer = setTimeout(() => {
+                isSttProcessing = true;
+                console.log("🎙️ Smart Silence Detected! Sending:", latestTranscript);
+                transcriptDelta("user", latestTranscript);
+                userLine = null;
+                wsRef.send(JSON.stringify({ type: 'text', text: latestTranscript }));
+                
+                // Stop the recognition immediately to prevent further result events
+                try { rec.stop(); } catch(e){}
+            }, 2200); // 2.2 seconds of silence to allow mid-sentence pauses
+        }
+    };
+    
+    return rec;
+}
+
+function playRobotBeep() { 
+    try {
+        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+        if (!AudioContextClass) return;
+        if (!audioCtx) {
+            audioCtx = new AudioContextClass();
+        }
+        if (audioCtx.state === 'suspended') {
+            audioCtx.resume();
+        }
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        
+        osc.type = 'sine';
+        // Classic high-pitched double-beep
+        osc.frequency.setValueAtTime(880, audioCtx.currentTime);
+        osc.frequency.setValueAtTime(1100, audioCtx.currentTime + 0.08);
+        
+        gain.gain.setValueAtTime(0.08, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.22);
+        
+        osc.start();
+        osc.stop(audioCtx.currentTime + 0.22);
+    } catch(e) {
+        console.error("Failed to play robot beep:", e);
+    }
+}
+
+function cleanSpeechText(text) {
+    if (!text) return "";
+    
+    let clean = text
+        // Strip emojis and symbols that speech engines pronounce literally
+        .replace(/[\u{1F300}-\u{1F9FF}\u{2600}-\u{27BF}]/gu, '')
+        // Strip asterisks (*) and underscores (_) commonly outputted by LLMs for formatting
+        .replace(/\*/g, '')
+        .replace(/_/g, '')
+        // Replace double hyphens with a space
+        .replace(/--/g, ' ')
+        // Clean up stuttering notations like "Wh.. what" or "w-w-what"
+        .replace(/\b(\w+)\.\.\s*\1\b/gi, '$1')
+        .replace(/\b\w+-\w+-\b/gi, '')
+        .replace(/\b(\w)-\1-(\w+)\b/gi, '$2')
+        .replace(/\b(\w)-(\w+)\b/gi, '$2')
+        .replace(/\b(\w)\.\.(\w+)\b/gi, (match, g1, g2) => {
+            if (g2.startsWith(g1.toLowerCase()) || g2.startsWith(g1.toUpperCase())) {
+                return g2;
+            }
+            return match;
+        })
+        .replace(/\bwh\.\.\s*what\b/gi, 'what')
+        .replace(/\b(\w+)-\1\b/gi, '$1')
+        // Replace multiple dots (e.g. "hello.. how") with space/comma
+        .replace(/\.{2,}/g, ' ')
+        // Clean up extra spacing
+        .replace(/\s+/g, ' ')
+        .trim();
+        
+    return clean;
+}
+
+function speak(text, prosody = {}, onStart, onEnd) {
+    synth.cancel(); // Stop current speech
+    
+    // Stop the mic immediately so it doesn't listen during playback
+    if (sttRec) {
+        try { sttRec.stop(); } catch(e){} 
+    }
+
+    // Play robot beep sound effect if text contains "beep" or "boop"
+    const hasBeeps = /beep|boop/i.test(text);
+    if (hasBeeps) {
+        playRobotBeep();
+    }
+
+    // Clean up stutters and strip beep/boop words from speech synthesis
+    let cleanText = cleanSpeechText(text)
+        .replace(/\bbeep\b/gi, '')
+        .replace(/\bboop\b/gi, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    const utterance = new SpeechSynthesisUtterance(cleanText);
+    
+    const voices = synth.getVoices();
+    const preferredVoices = [
+        'Microsoft Sonia Online (Natural)',
+        'Microsoft Aria Online (Natural)',
+        'Microsoft Jenny Online (Natural)',
+        'Google US English',
+        'Samantha',
+        'Alex'
+    ];
+
+    let selectedVoice = voices.find(v => v.lang.startsWith('en'));
+    for (const name of preferredVoices) {
+        const found = voices.find(v => v.name.includes(name));
+        if (found) {
+            selectedVoice = found;
+            break;
+        }
+    }
+
+    if (selectedVoice) utterance.voice = selectedVoice;
+    
+    // Apply LLM prosody formatting
+    utterance.pitch = 0.5 + (prosody.pitch || 0.5);
+    utterance.rate = Math.max(0.5, Math.min(2, prosody.speed || 1.0));
+    utterance.volume = Math.max(0, Math.min(1, prosody.volume || 0.9));
+    
+    let safetyTimeout = null;
+    const cleanup = () => {
+        if (safetyTimeout) {
+            clearTimeout(safetyTimeout);
+            safetyTimeout = null;
+        }
+        state.speaking = false;
+        els.speakingDot?.classList.remove("active");
+        
+        // Restart speech recognition after speech finishes
+        isSttProcessing = false;
+        if (sttRec && ws && ws.readyState === WebSocket.OPEN && !state.muted) {
+            console.log("🎙️ Speech finished/reset. Restarting mic...");
+            try { sttRec.start(); } catch(e){}
+        }
+    };
+
+    utterance.onstart = () => {
+        state.speaking = true;
+        els.speakingDot?.classList.add("active");
+        if (onStart) onStart();
+        
+        // Safety timeout: dynamic duration based on character count (approx 12 characters per second + 8s buffer)
+        const safetyDuration = Math.max(15000, (cleanText.length / 12) * 1000 + 8000);
+        safetyTimeout = setTimeout(() => {
+            console.warn("🎙️ Speech synthesis took too long or got stuck. Forcing cleanup.");
+            synth.cancel();
+            cleanup();
+            if (onEnd) onEnd();
+        }, safetyDuration);
+    };
+
+    utterance.onend = () => {
+        cleanup();
+        if (onEnd) onEnd();
+    };
+
+    utterance.onerror = (err) => {
+        console.error("SpeechSynthesis error:", err);
+        cleanup();
+        if (onEnd) onEnd();
+    };
+    
+    // Wrap speak in a setTimeout to avoid Chrome SpeechSynthesis queue bug
+    setTimeout(() => {
+        synth.speak(utterance);
+        
+        // Fallback: If onstart is never fired (swallowed completely by browser), force cleanup after 4.5s
+        // This allows slow online natural voices (Microsoft Edge) to fetch audio without false triggers
+        safetyTimeout = setTimeout(() => {
+            if (!state.speaking) {
+                console.warn("🎙️ Speech onstart never fired. Swallowed by browser? Forcing cleanup.");
+                cleanup();
+                if (onEnd) onEnd();
+            }
+        }, 4500);
+    }, 100);
+}
+
+let micStream = null;
+let micAnalyser = null;
+let micSource = null;
+
+async function initBargeInAnalyser() {
+    try {
+        if (!audioCtx) {
+            const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+            audioCtx = new AudioContextClass();
+        }
+        if (audioCtx.state === 'suspended') {
+            await audioCtx.resume();
+        }
+        
+        micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        micSource = audioCtx.createMediaStreamSource(micStream);
+        micAnalyser = audioCtx.createAnalyser();
+        micAnalyser.fftSize = 256;
+        micSource.connect(micAnalyser);
+        
+        const bufferLength = micAnalyser.frequencyBinCount;
+        const dataArray = new Uint8Array(bufferLength);
+        
+        function checkVolume() {
+            if (!state.powerOn) return; // Stop checking if powered off
+            
+            if (state.speaking && micAnalyser) {
+                micAnalyser.getByteTimeDomainData(dataArray);
+                
+                let sum = 0;
+                for (let i = 0; i < bufferLength; i++) {
+                    const deviation = (dataArray[i] - 128) / 128;
+                    sum += deviation * deviation;
+                }
+                const rms = Math.sqrt(sum / bufferLength);
+                
+                // Volume threshold (0.12 requires firm speaking or clap close to mic)
+                const BARGE_IN_THRESHOLD = 0.12;
+                if (rms > BARGE_IN_THRESHOLD) {
+                    console.log("🎙️ Interruption detected! RMS:", rms);
+                    handleBargeIn();
+                }
+            }
+            requestAnimationFrame(checkVolume);
+        }
+        
+        checkVolume();
+    } catch(e) {
+        console.error("Failed to initialize barge-in analyzer:", e);
+    }
+}
+
+function handleBargeIn() {
+    // 1. Halt speech immediately
+    synth.cancel();
+    
+    // 2. Change expression to surprised
+    targetState = setEmotion("surprise", 0.8);
+    
+    // 3. Update transcript to show interruption
+    transcriptDelta("robot", " [interrupted]...");
+    botLine = null; // reset line boundary
+    
+    // 4. Force speech recognition to restart immediately
+    isSttProcessing = false;
+    state.speaking = false;
+    els.speakingDot?.classList.remove("active");
+    
+    if (sttRec) {
+        try { sttRec.stop(); } catch(e){}
+    }
+}
+
+async function powerOn() {
+  if (ws || state.powerOn) return;
+  
+  // Initialize barge-in analyser
+  await initBargeInAnalyser();
+  
+  // Wipe all saved face embeddings and memories to start completely fresh from scratch
+  await peopleStore.clearAll();
+  await faceEngine.refreshMatcher();
+  
+  // Reuse existing sessionId from sessionStorage if present (handles refreshes)
+  let sessionId = sessionStorage.getItem("robot_session_id");
+  if (!sessionId) {
+    const pad = (n) => String(n).padStart(2, "0");
+    const d = new Date();
+    sessionId = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+    sessionStorage.setItem("robot_session_id", sessionId);
+  }
+  currentSessionId = sessionId;
   lastTaskStatuses.clear();
 
   retries = 0;
@@ -461,161 +808,141 @@ async function powerOn() {
 
 async function connect() {
   const gen = ++sessionGen;
-  setStatus("connecting", "waking up…");
-
-  // media first — mic & camera in parallel
-  player = new SpeakerPlayer({
-    onSpeaking: (active) => {
-      state.speaking = active;
-      els.speakingDot?.classList.toggle("active", active);
-    },
-  });
-  await player.resume();
-
-  mic = new MicCapture({
-    onChunk: (bytes) => {
-      if (gen !== sessionGen || !session) return;
+  
+  // Clean up any existing WebSocket cleanly before starting a new connection
+  if (ws) {
       try {
-        session.sendRealtimeInput({
-          audio: { data: b64FromBytes(bytes), mimeType: `audio/pcm;rate=${SEND_SAMPLE_RATE}` },
-        });
-      } catch {}
-    },
-    onLevel: (rms) => {
-      currentVolume = rms;
-    },
-  });
-
-  let micOk = true;
-  try {
-    await mic.start();
-    mic.setMuted(state.muted);
-  } catch (e) {
-    micOk = false;
-    logAction(`mic unavailable — ${e.name || e} (text chat still works)`);
+          ws.onclose = null;
+          ws.close();
+      } catch(e){}
+      ws = null;
   }
-  // Camera is already running from bootCamera() at page load; just update the media pill.
-  const camOk = !!camStream;
-  setMedia(micOk && camOk, micOk && camOk ? "Media ✓" : micOk ? "No camera" : camOk ? "No mic" : "No media");
-  if (micOk) logAction(`microphone hot · ${mic.label()} · echo-cancelled (barge-in enabled)`);
-
-  ai = new GoogleGenAI({ apiKey: API_KEY, httpOptions: { apiVersion: "v1beta" } });
-  logAction(`connecting -> ${MODEL} · voice ${VOICE_NAME}`);
+  
+  setStatus("connecting", "waking up…");
+  logAction(`connecting -> Local LLM`);
 
   try {
-    session = await ai.live.connect({
-      model: MODEL,
-      config: {
-        responseModalities: [Modality.AUDIO],
-        speechConfig: {
-          voiceConfig: { prebuiltVoiceConfig: { voiceName: VOICE_NAME } },
-        },
-        systemInstruction: SYSTEM_PROMPT,
-        tools: buildTools(),
-        inputAudioTranscription: {},
-        outputAudioTranscription: {},
-      },
-      callbacks: {
-        onopen: () => {
-          if (gen !== sessionGen) return;
-          retries = 0;
-          setStatus("online", "");
-          logAction("online — listening & watching");
-        },
-        onmessage: (msg) => {
-          if (gen !== sessionGen) return;
-          handleServerMessage(msg);
-        },
-        onerror: (e) => {
-          if (gen !== sessionGen) return;
-          logAction(`link error: ${e?.message || e}`);
-        },
-        onclose: (e) => {
-          if (gen !== sessionGen) return;
-          session = null;
-          maybeReconnect(e?.reason || "link closed");
-        },
-      },
-    });
+    const socket = new WebSocket(`ws://localhost:8080/ws?sessionId=${currentSessionId}`);
+    ws = socket;
+    window.activeWebSocket = socket;
+    
+    socket.onopen = () => {
+        if (gen !== sessionGen) return;
+        retries = 0;
+        setStatus("online", "");
+        logAction("online — listening & watching");
+        setMedia(true, "Media ✓");
+    };
+    
+    socket.onmessage = async (event) => {
+        if (gen !== sessionGen) return;
+        const data = JSON.parse(event.data);
+        
+        if (data.type === 'init') {
+            if (data.mode === 'gemini_live') {
+                console.log("🧠 Switching to Gemini Live mode!");
+                try {
+                    socket.onclose = null; // Prevent reconnect loop
+                    socket.close();
+                } catch(e){} 
+                if (ws === socket) ws = null;
+                runGeminiLiveMode(data.apiKey, data.model, data.voice, gen);
+            } else {
+                console.log("🧠 Staying in Gemma 4 mode!");
+                sttRec = initSpeechRecognition(socket);
+                window.activeSpeechRecognition = sttRec;
+                if (sttRec && !state.muted) {
+                    try { sttRec.start(); } catch(e){}
+                    logAction("microphone hot");
+                }
+            }
+            return;
+        }
+        
+        if (data.type === 'response') {
+            if (data.emotion) {
+                const emotionMap = {
+                    "happiness": "happy",
+                    "sadness": "sad",
+                    "curiosity": "curious",
+                    "surprise": "surprised",
+                    "fear": "scared",
+                    "anger": "angry"
+                };
+                const mappedEmotion = emotionMap[data.emotion.toLowerCase()] || data.emotion;
+                setExpression(mappedEmotion);
+            }
+            
+            if (data.speech_text) {
+                transcriptDelta("robot", data.speech_text);
+                botLine = null; // Reset botLine so next response starts a new line
+                speak(
+                    data.speech_text, 
+                    data.prosody || {},
+                    () => { 
+                        state.speaking = true;
+                        els.speakingDot?.classList.add("active");
+                    },
+                    () => { 
+                        state.speaking = false;
+                        els.speakingDot?.classList.remove("active");
+                    }
+                );
+            }
+        }
+    };
+    
+    socket.onerror = (e) => {
+        if (gen !== sessionGen) return;
+        logAction(`link error`);
+    };
+    
+    socket.onclose = (e) => {
+        if (gen !== sessionGen) return;
+        if (ws === socket) ws = null;
+        maybeReconnect(e?.reason || "link closed");
+    };
+    
   } catch (e) {
-    session = null;
+    ws = null;
     teardownMedia();
     setStatus("error", `connect failed: ${e?.message || e}`);
     logAction(`connect failed: ${e?.message || e}`);
     return;
   }
 
-  if (gen !== sessionGen) return; // powered off while connecting
-
   // Wipe all saved face embeddings and memories to start completely fresh from scratch
   await peopleStore.clearAll();
   await faceEngine.refreshMatcher();
-
-  if (camOk) {
-    startFrameUpload(gen);
-    logAction(`camera stream: native fps on screen · ${MODEL_FRAME_FPS} fps to the model`);
-    // Face engine already started at boot; just ensure it's running (no-op if already started).
-    if (faceEngine.ready && !faceEngine._timer) faceEngine.start(els.cameraFeed);
-  }
 
   const knownNames = [];
   const knownTxt = knownNames.length
     ? `People you already know by face: ${knownNames.join(", ")}.`
     : "You don't know anyone by face yet.";
-  session.sendClientContent({
-    turns: [{
-      role: "user",
-      parts: [{ text:
-        `(System boot complete. ${timeContext()} ${knownTxt} Say a short and warm "Hey!" or "Hey there!", matching the time of day, and wait for the user to respond.)` }],
-    }],
-    turnComplete: true,
-  });
-}
-
-function handleServerMessage(msg) {
-  if (msg.data) player?.play(bytesFromB64(msg.data));
-
-  const tc = msg.toolCall;
-  if (tc?.functionCalls?.length) {
-    Promise.all(tc.functionCalls.map(async (fc) => ({
-      id: fc.id,
-      name: fc.name,
-      response: {
-        result: UI_TOOLS.has(fc.name)
-          ? executeUiTool(fc.name, fc.args || {})
-          : PEOPLE_TOOLS.has(fc.name)
-          ? await executePeopleTool(fc.name, fc.args || {})
-          : robot.execute(fc.name, fc.args || {}),
-      },
-    }))).then((functionResponses) => {
-      try { session?.sendToolResponse({ functionResponses }); } catch {}
-    });
-  }
-
-  const sc = msg.serverContent;
-  if (sc) {
-    if (sc.inputTranscription?.text) transcriptDelta("user", sc.inputTranscription.text);
-    if (sc.outputTranscription?.text) transcriptDelta("robot", sc.outputTranscription.text);
-    if (sc.interrupted) {
-      player?.interrupt();
-      logAction("interrupted — user barge-in");
-      postLog("action", { type: "interrupt", message: "User barge-in interrupted playback" });
-    }
-    if (sc.turnComplete) {
-      if (userLine && userLine.textContent) {
-        postLog("conversation", { role: "user", text: userLine.textContent });
-      }
-      if (botLine && botLine.textContent) {
-        postLog("conversation", { role: "robot", text: botLine.textContent });
-      }
-      userLine = null;
-      botLine = null;
-    }
-  }
+  
+  // Try to send boot context once connected (disabled to prevent double responses on startup)
+  /*
+  setTimeout(() => {
+    sendContext(
+      `(System boot complete. ${timeContext()} ${knownTxt} Say a short and warm "Hey!" or "Hey there!", matching the time of day, and wait for the user to respond.)`,
+      true
+    );
+  }, 1000);
+  */
 }
 
 function maybeReconnect(reason) {
   if (!state.powerOn) return;
+  
+  // Prevent reconnect loop if Gemini Live (WebRTC) connection fails
+  if (ws === null) {
+      console.error("🔌 Gemini Live connection failed:", reason);
+      logAction(`Gemini Live connection failed: ${reason}`);
+      setStatus("error", `Live API failed: ${reason}`);
+      teardownMedia();
+      return;
+  }
+  
   retries += 1;
   if (retries > MAX_RETRIES) {
     teardownMedia();
@@ -631,30 +958,67 @@ function maybeReconnect(reason) {
 }
 
 function teardownMedia() {
-  if (frameTimer) { clearInterval(frameTimer); frameTimer = null; }
-  // Keep camera + face detection running after power-off so the LED face
-  // and face box stay live. Only stop mic + speaker (AI-session media).
-  mic?.stop(); mic = null;
-  player?.stop(); player = null;
+  if (sttRec) {
+    try { sttRec.stop(); } catch(e){}
+    sttRec = null;
+  }
+  synth.cancel();
   state.speaking = false;
   els.speakingDot?.classList.remove("active");
+
+  // Clean up Gemini Live captures
+  if (mic) {
+    try { mic.stop(); } catch(e){}
+    mic = null;
+  }
+  if (player) {
+    try { player.stop(); } catch(e){}
+    player = null;
+  }
+  if (frameTimer) {
+    clearInterval(frameTimer);
+    frameTimer = null;
+  }
 }
 
 function powerOff() {
   sessionGen++; // invalidate all in-flight callbacks
-  try { session?.close(); } catch {}
+  try { if (ws) ws.close(); } catch {}
+  ws = null;
+
+  // Clean up Gemini Live session
+  try { if (session) session.close(); } catch(e){}
   session = null;
+
   teardownMedia();
+  
+  // Clear the session storage on manual Power Off
+  sessionStorage.removeItem("robot_session_id");
   currentSessionId = null;
+  
   setStatus("offline", "");
   setMedia(false, "Media off");
   logAction("cognitive core shut down");
+
+  // Stop mic stream if active
+  if (micStream) {
+      try {
+          micStream.getTracks().forEach(track => track.stop());
+      } catch(e){}
+      micStream = null;
+  }
 }
 
 // ----------------------------------------------------------
 // Controls
 // ----------------------------------------------------------
-els.powerBtn.addEventListener("click", () => {}); // Disabled in simulator
+els.powerBtn.addEventListener("click", () => {
+  if (state.powerOn) {
+    powerOff();
+  } else {
+    powerOn();
+  }
+});
 const exprBtns = document.querySelectorAll("#expressionControls .btn");
 if (exprBtns) {
   exprBtns.forEach(btn => {
@@ -665,7 +1029,13 @@ if (exprBtns) {
 }
 els.muteBtn.addEventListener("click", () => {
   state.muted = !state.muted;
-  mic?.setMuted(state.muted);
+  if (sttRec) {
+    if (state.muted) {
+        try { sttRec.stop(); } catch(e){}
+    } else {
+        try { sttRec.start(); } catch(e){}
+    }
+  }
   els.muteBtn.textContent = state.muted ? "Unmute" : "Mute";
   els.muteBtn.classList.toggle("active", state.muted);
   logAction(`mic ${state.muted ? "muted" : "live"}`);
@@ -678,11 +1048,8 @@ function sendText() {
   transcriptDelta("user", text);
   postLog("conversation", { role: "user", text });
   userLine = null;
-  if (session) {
-    session.sendClientContent({
-      turns: [{ role: "user", parts: [{ text }] }],
-      turnComplete: true,
-    });
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'text', text: text }));
   } else {
     transcriptDelta("robot", "(power me on first — the brain is offline)");
     botLine = null;
@@ -954,10 +1321,10 @@ function drawOverlay() {
 // ----------------------------------------------------------
 // boot
 // ----------------------------------------------------------
-setStatus("online", "Simulator");
-setMedia(false, "Starting camera…");
-logAction(`display ready - Simulator Mode. Gemini disabled.`);
-state.powerOn = true;
+setStatus("offline", "");
+setMedia(false, "Media off");
+logAction(`display ready - click Power On to start`);
+state.powerOn = false;
 state.expression = "neutral";
 
 requestAnimationFrame(tick);
@@ -1066,7 +1433,7 @@ function drawRobotFace() {
   const eyeOpenT = asleep ? 0.12 : (now < face.blinkUntil ? (Math.random() < 0.2 ? 0.3 : 0.06) : 1);
   res = spring(face.eyeOpen, eyeOpenT, face.vEyeOpen, 0.4, 0.5); face.eyeOpen = res.p; face.vEyeOpen = res.v;
 
-  const level = state.speaking && player ? player.getLevel() : 0;
+  const level = state.speaking ? (Math.sin(performance.now() / 70) * 0.25 + 0.25) : 0;
   const mouthT = asleep ? 0 : Math.max(p.base, level);
   res = spring(face.mouthOpen, mouthT, face.vMouthOpen, 0.3, 0.6); face.mouthOpen = res.p; face.vMouthOpen = res.v;
 
@@ -1204,4 +1571,152 @@ function drawRobotFace() {
   }
   ctx.shadowBlur = 0;
   ctx.restore();
+}
+
+async function runGeminiLiveMode(apiKey, modelName, voiceName, gen) {
+  player = new SpeakerPlayer({
+    onSpeaking: (active) => {
+      state.speaking = active;
+      els.speakingDot?.classList.toggle("active", active);
+    },
+  });
+  await player.resume();
+
+  mic = new MicCapture({
+    onChunk: (bytes) => {
+      if (gen !== sessionGen || !session) return;
+      try {
+        session.sendRealtimeInput({
+          audio: { data: b64FromBytes(bytes), mimeType: `audio/pcm;rate=${SEND_SAMPLE_RATE}` },
+        });
+      } catch {}
+    },
+    onLevel: (rms) => {
+      currentVolume = rms;
+    },
+  });
+
+  let micOk = true;
+  try {
+    await mic.start();
+    mic.setMuted(state.muted);
+  } catch (e) {
+    micOk = false;
+    logAction(`mic unavailable — ${e.name || e} (text chat still works)`);
+  }
+  const camOk = !!camStream;
+  setMedia(micOk && camOk, micOk && camOk ? "Media ✓" : micOk ? "No camera" : camOk ? "No mic" : "No media");
+  if (micOk) logAction(`microphone hot · ${mic.label()} · echo-cancelled (barge-in enabled)`);
+
+  ai = new GoogleGenAI({ apiKey: apiKey, httpOptions: { apiVersion: "v1beta" } });
+  logAction(`connecting -> ${modelName} · voice ${voiceName}`);
+
+  try {
+    session = await ai.live.connect({
+      model: modelName,
+      config: {
+        responseModalities: [Modality.AUDIO],
+        speechConfig: {
+          voiceConfig: { prebuiltVoiceConfig: { voiceName: voiceName } },
+        },
+        systemInstruction: SYSTEM_PROMPT,
+        tools: buildTools(),
+        inputAudioTranscription: {},
+        outputAudioTranscription: {},
+      },
+      callbacks: {
+        onopen: async () => {
+          if (gen !== sessionGen) return;
+          retries = 0;
+          setStatus("online", "");
+          logAction("online — listening & watching");
+          
+          // Seed session memory from python backend log cache if present
+          try {
+              const res = await fetch(`/api/memory?sessionId=${currentSessionId}`);
+              const data = await res.json();
+              if (data.turns && data.turns.length > 0) {
+                  console.log(`🧠 Seeding Gemini Live session memory with ${data.turns.length} turns`);
+                  session.sendClientContent({
+                      turns: data.turns,
+                      turnComplete: false
+                  });
+                  logAction(`reloaded ${data.turns.length} conversation context turns`);
+              }
+          } catch (e) {
+              console.warn("Failed to reload session memory:", e);
+          }
+        },
+        onmessage: (msg) => {
+          if (gen !== sessionGen) return;
+          handleServerMessage(msg);
+        },
+        onerror: (e) => {
+          if (gen !== sessionGen) return;
+          logAction(`link error: ${e?.message || e}`);
+        },
+        onclose: (e) => {
+          if (gen !== sessionGen) return;
+          session = null;
+          maybeReconnect(e?.reason || "link closed");
+        },
+      },
+    });
+  } catch (e) {
+    session = null;
+    teardownMedia();
+    setStatus("error", `connect failed: ${e?.message || e}`);
+    logAction(`connect failed: ${e?.message || e}`);
+    return;
+  }
+
+  if (gen !== sessionGen) return;
+
+  if (camOk) {
+    startFrameUpload(gen);
+    logAction(`camera stream: native fps on screen · ${MODEL_FRAME_FPS} fps to the model`);
+    if (faceEngine.ready && !faceEngine._timer) faceEngine.start(els.cameraFeed);
+  }
+}
+
+function handleServerMessage(msg) {
+  if (msg.data) player?.play(bytesFromB64(msg.data));
+
+  const tc = msg.toolCall;
+  if (tc?.functionCalls?.length) {
+    Promise.all(tc.functionCalls.map(async (fc) => ({
+      id: fc.id,
+      name: fc.name,
+      response: {
+        result: UI_TOOLS.has(fc.name)
+          ? executeUiTool(fc.name, fc.args || {})
+          : PEOPLE_TOOLS.has(fc.name)
+          ? await executePeopleTool(fc.name, fc.args || {})
+          : robot.execute(fc.name, fc.args || {}),
+      },
+    }))).then((functionResponses) => {
+      try { session?.sendToolResponse({ functionResponses }); } catch {}
+    });
+  }
+
+  const sc = msg.serverContent;
+  if (sc) {
+    if (sc.inputTranscription?.text) transcriptDelta("user", sc.inputTranscription.text);
+    if (sc.outputTranscription?.text) transcriptDelta("robot", sc.outputTranscription.text);
+    if (sc.interrupted) {
+      player?.interrupt();
+      logAction("interrupted — user barge-in");
+      postLog("action", { type: "interrupt", message: "User barge-in interrupted playback" });
+    }
+    if (sc.turnComplete) {
+      if (userLine && userLine.textContent) {
+        postLog("conversation", { role: "user", text: userLine.textContent });
+      }
+      if (botLine && botLine.textContent) {
+        postLog("conversation", { role: "robot", text: botLine.textContent });
+      }
+      userLine = null;
+      botLine = null;
+    }
+  }
 }
