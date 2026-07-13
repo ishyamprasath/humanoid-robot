@@ -58,3 +58,13 @@ backend/face_identification/vision_project_summary.md
 
 # Startup scripts
 start_robot.bat
+
+# Session log files and directories
+session-2026*
+conv-log/
+actions-log/
+task-log/
+**/conv-log/
+**/actions-log/
+**/task-log/
+
