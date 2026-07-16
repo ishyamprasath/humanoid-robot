@@ -9,7 +9,7 @@
 // ============================================================
 
 import {
-  API_KEY, CAMERA_HFOV, MAX_RETRIES, MODEL, MODEL_FRAME_FPS,
+  API_KEY, ULTRAVOX_API_KEY, CAMERA_HFOV, MAX_RETRIES, MODEL, MODEL_FRAME_FPS,
   MODEL_FRAME_JPEG_QUALITY, MODEL_FRAME_WIDTH, REGREET_COOLDOWN_MS,
   RETRY_DELAY_MS, ROOM_HALF_METERS as ROOM_HALF, SEND_SAMPLE_RATE,
   SYSTEM_PROMPT, VOICE_NAME,
@@ -21,6 +21,7 @@ import { buildTools } from "./tools.js";
 import { GoogleGenAI, Modality } from "@google/genai";
 import { MicCapture, SpeakerPlayer } from "./audio.js";
 import { relay } from "./relay.js";
+import { UltravoxSession } from "ultravox-client";
 
 relay.connect();
 
@@ -950,6 +951,14 @@ async function connect() {
                 } catch(e){} 
                 if (ws === socket) ws = null;
                 runGeminiLiveMode(data.apiKey, data.model, data.voice, gen);
+            } else if (data.mode === 'ultravox' || requestedMode === 'ultravox') {
+                console.log("🧠 Switching to Ultravox mode!");
+                try {
+                    socket.onclose = null; // Prevent reconnect loop
+                    socket.close();
+                } catch(e){} 
+                if (ws === socket) ws = null;
+                runUltravoxMode(gen);
             } else {
                 console.log("🧠 Staying in Gemma 4 mode!");
                 sttRec = initSpeechRecognition(socket);
@@ -1089,8 +1098,13 @@ function powerOff() {
   try { if (ws) ws.close(); } catch {}
   ws = null;
 
-  // Clean up Gemini Live session
-  try { if (session) session.close(); } catch(e){}
+  // Clean up AI session (Gemini or Ultravox)
+  try {
+      if (session) {
+          if (typeof session.leaveCall === 'function') session.leaveCall();
+          if (typeof session.close === 'function') session.close();
+      }
+  } catch(e){}
   session = null;
 
   teardownMedia();
@@ -1821,5 +1835,154 @@ function handleServerMessage(msg) {
       userLine = null;
       botLine = null;
     }
+  }
+}
+
+function getUltravoxTools() {
+    if (typeof buildTools !== 'function') return [];
+    const geminiTools = buildTools()[0].functionDeclarations;
+    return geminiTools.map(t => {
+        const dynamicParameters = [];
+        if (t.parameters && t.parameters.properties) {
+            for (const [pName, pSchema] of Object.entries(t.parameters.properties)) {
+                dynamicParameters.push({
+                    name: pName,
+                    location: "PARAMETER_LOCATION_BODY",
+                    schema: JSON.parse(JSON.stringify(pSchema)),
+                    required: t.parameters.required ? t.parameters.required.includes(pName) : false
+                });
+            }
+        }
+        return {
+            temporaryTool: {
+                modelToolName: t.name,
+                description: t.description,
+                dynamicParameters: dynamicParameters,
+                client: {}
+            }
+        };
+    });
+}
+
+async function runUltravoxMode(gen) {
+  // We use SpeakerPlayer just for its AnalyserNode (lip-sync visualization)
+  player = new SpeakerPlayer({
+    onSpeaking: (active) => {
+      // Not strictly needed as Ultravox handles playback, but good for cleanup
+    },
+  });
+  await player.resume();
+
+  // Create an UltravoxSession
+  const uvSession = new UltravoxSession();
+  session = uvSession; // store globally so powerOff() can clean it up
+  
+  // Register tools
+  const allTools = typeof buildTools === 'function' ? buildTools()[0].functionDeclarations : [];
+  for (const t of allTools) {
+      uvSession.registerToolImplementation(t.name, async (args) => {
+          if (UI_TOOLS.has(t.name)) return executeUiTool(t.name, args || {});
+          if (PEOPLE_TOOLS.has(t.name)) return await executePeopleTool(t.name, args || {});
+          return robot.execute(t.name, args || {});
+      });
+  }
+  
+  // Track status
+  uvSession.addEventListener("status", (e) => {
+      if (gen !== sessionGen) return;
+      if (uvSession.status === "connected") {
+          setStatus("online", "Ultravox Live");
+          logAction("online — listening (Ultravox audio-only mode)");
+          setMedia(true, "Audio Only");
+      } else if (uvSession.status === "disconnected") {
+          maybeReconnect("Ultravox session disconnected");
+      }
+  });
+  
+  // Track transcription
+  uvSession.addEventListener("transcripts", (e) => {
+      if (gen !== sessionGen) return;
+      const transcripts = uvSession.transcripts;
+      if (transcripts && transcripts.length > 0) {
+          const latest = transcripts[transcripts.length - 1];
+          if (latest.speaker === "user") {
+              transcriptDelta("user", latest.text);
+          } else {
+              transcriptDelta("robot", latest.text);
+          }
+      }
+  });
+  
+  // Handle audio attachment for lip-sync
+  uvSession.addEventListener("status", (e) => {
+      if (uvSession.status === "connected") {
+          // Ultravox creates an <audio> element to play back the WebRTC audio.
+          // Wait briefly for it to be added to DOM if it does so, or fetch it.
+          // In some client SDK versions, we must attach the stream or it attaches itself.
+          // Let's hook into window.audioContext to route its track if we can,
+          // but we can also just let player.getLevel() fall back to 0 if we can't easily intercept it here.
+          // For a robust lip-sync, we need to create a MediaStreamAudioSourceNode from the remote stream.
+          
+          setTimeout(() => {
+              const audioEls = document.querySelectorAll('audio');
+              for (const el of audioEls) {
+                  if (el.srcObject && el.srcObject.getAudioTracks().length > 0) {
+                      try {
+                          const srcNode = player._ctx.createMediaElementSource(el);
+                          srcNode.connect(player._analyser);
+                          srcNode.connect(player._ctx.destination);
+                          
+                          // Track speaking state
+                          setInterval(() => {
+                              if (player.getLevel() > 0.05) {
+                                  state.speaking = true;
+                                  els.speakingDot?.classList.add("active");
+                              } else {
+                                  state.speaking = false;
+                                  els.speakingDot?.classList.remove("active");
+                              }
+                          }, 100);
+                          
+                      } catch(err) {
+                          console.warn("Could not hook Ultravox audio element for lip-sync:", err);
+                      }
+                  }
+              }
+          }, 1000);
+      }
+  });
+
+  logAction(`connecting -> Ultravox (creating call)`);
+  
+  try {
+      // 1. Create a Call via our local backend API proxy to avoid CORS
+      const response = await fetch("/api/ultravox", {
+          method: "POST",
+          headers: {
+              "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+              systemPrompt: SYSTEM_PROMPT,
+              model: "fixie-ai/ultravox",
+              selectedTools: getUltravoxTools()
+          })
+      });
+      
+      if (!response.ok) {
+          const errData = await response.json();
+          throw new Error(errData.error || response.statusText);
+      }
+      
+      const callData = await response.json();
+      const joinUrl = callData.joinUrl;
+      
+      // 2. Join the call using ultravox-client
+      await uvSession.joinCall(joinUrl);
+      
+  } catch (e) {
+      session = null;
+      teardownMedia();
+      setStatus("error", `Ultravox failed: ${e?.message || e}`);
+      logAction(`Ultravox connect failed: ${e?.message || e}`);
   }
 }

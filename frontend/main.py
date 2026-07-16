@@ -270,6 +270,45 @@ async def update_llm_config(request: Request):
     except Exception as e:
         return JSONResponse(status_code=400, content={"error": str(e)})
 
+@app.post("/api/ultravox")
+async def create_ultravox_call(request: Request):
+    try:
+        data = await request.json()
+        system_prompt = data.get("systemPrompt", "")
+        model = data.get("model", "fixie-ai/ultravox")
+        voice = data.get("voice", "Kore")
+        
+        api_key = ENV_VARS.get("VITE_ULTRAVOX_API_KEY") or ENV_VARS.get("ULTRAVOX_API_KEY", "")
+        if not api_key:
+            return JSONResponse(status_code=400, content={"error": "ULTRAVOX_API_KEY not found in server .env"})
+            
+        url = "https://api.ultravox.ai/api/calls"
+        headers = {
+            "X-API-Key": api_key,
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "systemPrompt": system_prompt,
+            "model": model
+        }
+        
+        selected_tools = data.get("selectedTools")
+        if selected_tools:
+            payload["selectedTools"] = selected_tools
+            
+        if voice and voice != "Kore":
+            payload["voice"] = voice
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, headers=headers, json=payload) as resp:
+                if resp.status not in (200, 201):
+                    err_text = await resp.text()
+                    return JSONResponse(status_code=resp.status, content={"error": f"Ultravox API error: {err_text}"})
+                result = await resp.json()
+                return result
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
 @app.post("/api/log/conversation")
 async def log_conversation(request: Request):
     try:

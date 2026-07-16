@@ -12,7 +12,8 @@
   },
   "dependencies": {
     "@google/genai": "^1.16.0",
-    "@vladmandic/face-api": "^1.7.15"
+    "@vladmandic/face-api": "^1.7.15",
+    "ultravox-client": "^0.5.0"
   },
   "devDependencies": {
     "vite": "^7.1.3"

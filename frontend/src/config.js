@@ -4,6 +4,7 @@
 // ============================================================
 
 export const API_KEY = import.meta.env.VITE_GEMINI_API_KEY ?? "";
+export const ULTRAVOX_API_KEY = import.meta.env.VITE_ULTRAVOX_API_KEY ?? "";
 export const MODEL = (import.meta.env.VITE_GEMINI_MODEL ?? "gemini-3.1-flash-live-preview")
   .replace(/^models\//, "");
 export const VOICE_NAME = import.meta.env.VITE_VOICE_NAME ?? "Kore";

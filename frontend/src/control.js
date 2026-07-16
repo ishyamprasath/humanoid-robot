@@ -35,13 +35,16 @@ els.modeBtns.forEach(btn => {
     });
 });
 
-let currentLlmMode = 'auto'; // auto | gemini_live | local
+let currentLlmMode = 'auto'; // auto | gemini_live | ultravox | local
 if (els.modeToggleBtn) {
     els.modeToggleBtn.addEventListener('click', () => {
         if (currentLlmMode === 'auto') {
             currentLlmMode = 'gemini_live';
-            els.modeToggleBtn.textContent = 'Mode: Cloud';
+            els.modeToggleBtn.textContent = 'Mode: Gemini';
         } else if (currentLlmMode === 'gemini_live') {
+            currentLlmMode = 'ultravox';
+            els.modeToggleBtn.textContent = 'Mode: Ultravox';
+        } else if (currentLlmMode === 'ultravox') {
             currentLlmMode = 'local';
             els.modeToggleBtn.textContent = 'Mode: Local';
         } else {
