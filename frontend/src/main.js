@@ -282,7 +282,6 @@ function newLine(who, cls) {
   els.transcript.appendChild(div);
   return span;
 }
-
 function transcriptDelta(role, text) {
   let isNew = false;
   if (role === "user") {
@@ -292,6 +291,20 @@ function transcriptDelta(role, text) {
   } else {
     if (!botLine) { botLine = newLine("Robot", "bot"); isNew = true; }
     botLine.textContent += text;
+    relay.publish("transcript", { role, text: botLine.textContent, isNew });
+  }
+  els.transcript.scrollTop = els.transcript.scrollHeight;
+}
+
+function transcriptSet(role, text) {
+  let isNew = false;
+  if (role === "user") {
+    if (!userLine) { userLine = newLine("You", "user"); isNew = true; }
+    userLine.textContent = text;
+    relay.publish("transcript", { role, text: userLine.textContent, isNew });
+  } else {
+    if (!botLine) { botLine = newLine("Robot", "bot"); isNew = true; }
+    botLine.textContent = text;
     relay.publish("transcript", { role, text: botLine.textContent, isNew });
   }
   els.transcript.scrollTop = els.transcript.scrollHeight;
@@ -1083,6 +1096,11 @@ function teardownMedia() {
     try { mic.stop(); } catch(e){}
     mic = null;
   }
+  
+  if (player && player._ctx) {
+      try { player._ctx.close(); } catch(e){}
+      player = null;
+  }
   if (player) {
     try { player.stop(); } catch(e){}
     player = null;
@@ -1842,22 +1860,18 @@ function getUltravoxTools() {
     if (typeof buildTools !== 'function') return [];
     const geminiTools = buildTools()[0].functionDeclarations;
     return geminiTools.map(t => {
-        const dynamicParameters = [];
-        if (t.parameters && t.parameters.properties) {
-            for (const [pName, pSchema] of Object.entries(t.parameters.properties)) {
-                dynamicParameters.push({
-                    name: pName,
-                    location: "PARAMETER_LOCATION_BODY",
-                    schema: JSON.parse(JSON.stringify(pSchema)),
-                    required: t.parameters.required ? t.parameters.required.includes(pName) : false
-                });
-            }
-        }
         return {
             temporaryTool: {
                 modelToolName: t.name,
                 description: t.description,
-                dynamicParameters: dynamicParameters,
+                dynamicParameters: [
+                    {
+                        name: "args",
+                        location: "PARAMETER_LOCATION_BODY",
+                        schema: t.parameters ? JSON.parse(JSON.stringify(t.parameters)) : { type: "object" },
+                        required: true
+                    }
+                ],
                 client: {}
             }
         };
@@ -1881,9 +1895,14 @@ async function runUltravoxMode(gen) {
   const allTools = typeof buildTools === 'function' ? buildTools()[0].functionDeclarations : [];
   for (const t of allTools) {
       uvSession.registerToolImplementation(t.name, async (args) => {
-          if (UI_TOOLS.has(t.name)) return executeUiTool(t.name, args || {});
-          if (PEOPLE_TOOLS.has(t.name)) return await executePeopleTool(t.name, args || {});
-          return robot.execute(t.name, args || {});
+          let parsedArgs = args;
+          if (typeof parsedArgs === 'string') {
+              try { parsedArgs = JSON.parse(parsedArgs); } catch(e) { parsedArgs = {}; }
+          }
+          parsedArgs = parsedArgs || {};
+          if (UI_TOOLS.has(t.name)) return executeUiTool(t.name, parsedArgs);
+          if (PEOPLE_TOOLS.has(t.name)) return await executePeopleTool(t.name, parsedArgs);
+          return robot.execute(t.name, parsedArgs);
       });
   }
   
@@ -1903,13 +1922,31 @@ async function runUltravoxMode(gen) {
   uvSession.addEventListener("transcripts", (e) => {
       if (gen !== sessionGen) return;
       const transcripts = uvSession.transcripts;
-      if (transcripts && transcripts.length > 0) {
-          const latest = transcripts[transcripts.length - 1];
-          if (latest.speaker === "user") {
-              transcriptDelta("user", latest.text);
-          } else {
-              transcriptDelta("robot", latest.text);
-          }
+      if (!transcripts) return;
+      
+      els.transcript.innerHTML = ""; // Rebuild to prevent flooding and overlapping text
+      let lastRole = null;
+      let lastText = "";
+      
+      for (const t of transcripts) {
+          const role = t.speaker === "user" ? "user" : "bot";
+          const div = document.createElement("div");
+          div.className = `line ${role}`;
+          const b = document.createElement("b");
+          b.textContent = role === "user" ? "You: " : "Robot: ";
+          div.appendChild(b);
+          const span = document.createElement("span");
+          span.textContent = t.text;
+          div.appendChild(span);
+          els.transcript.appendChild(div);
+          
+          lastRole = role;
+          lastText = t.text;
+      }
+      els.transcript.scrollTop = els.transcript.scrollHeight;
+      
+      if (lastRole) {
+          relay.publish("transcript", { role: lastRole, text: lastText, isNew: false });
       }
   });
   
@@ -1926,15 +1963,22 @@ async function runUltravoxMode(gen) {
           setTimeout(() => {
               const audioEls = document.querySelectorAll('audio');
               for (const el of audioEls) {
-                  if (el.srcObject && el.srcObject.getAudioTracks().length > 0) {
+                  if (el.srcObject && el.srcObject.getAudioTracks().length > 0 && !el._lipSyncHooked) {
                       try {
-                          const srcNode = player._ctx.createMediaElementSource(el);
+                          el._lipSyncHooked = true;
+                          // Use createMediaStreamSource instead of MediaElementSource to preserve browser AEC
+                          // This fixes the 'voice identification not accurate' issue where mic hears the robot.
+                          const srcNode = player._ctx.createMediaStreamSource(el.srcObject);
                           srcNode.connect(player._analyser);
-                          srcNode.connect(player._ctx.destination);
+                          // Do NOT connect to destination; let the native <audio> element play it for AEC.
                           
                           // Track speaking state
-                          setInterval(() => {
-                              if (player.getLevel() > 0.05) {
+                          const lipSyncInterval = setInterval(() => {
+                              if (!session || session !== uvSession) {
+                                  clearInterval(lipSyncInterval);
+                                  return;
+                              }
+                              if (player && player.getLevel() > 0.05) {
                                   state.speaking = true;
                                   els.speakingDot?.classList.add("active");
                               } else {

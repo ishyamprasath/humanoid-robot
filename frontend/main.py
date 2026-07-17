@@ -47,7 +47,7 @@ def load_env(env_path):
                 if line and not line.startswith("#") and "=" in line:
                     parts = line.split("=", 1)
                     if len(parts) == 2:
-                        ENV_VARS[parts[0].strip()] = parts[1].strip()
+                        ENV_VARS[parts[0].strip()] = parts[1].strip().strip("\"'")
 
 # Load root .env first, then frontend .env (overwriting with frontend-specific config if present)
 parent_dir = os.path.dirname(ROOT_DIR)
