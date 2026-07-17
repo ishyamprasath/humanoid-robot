@@ -1858,20 +1858,40 @@ function handleServerMessage(msg) {
 
 function getUltravoxTools() {
     if (typeof buildTools !== 'function') return [];
+    
+    // Fixie uses strict JSON Schema. Gemini uses uppercase types ("OBJECT", "STRING").
+    function fixSchemaTypes(obj) {
+        if (!obj || typeof obj !== 'object') return obj;
+        if (Array.isArray(obj)) return obj.map(fixSchemaTypes);
+        const res = {};
+        for (const [k, v] of Object.entries(obj)) {
+            if (k === 'type' && typeof v === 'string') {
+                res[k] = v.toLowerCase();
+            } else {
+                res[k] = fixSchemaTypes(v);
+            }
+        }
+        return res;
+    }
+
     const geminiTools = buildTools()[0].functionDeclarations;
     return geminiTools.map(t => {
+        const dynamicParameters = [];
+        if (t.parameters && t.parameters.properties) {
+            for (const [pName, pSchema] of Object.entries(t.parameters.properties)) {
+                dynamicParameters.push({
+                    name: pName,
+                    location: "PARAMETER_LOCATION_BODY",
+                    schema: fixSchemaTypes(JSON.parse(JSON.stringify(pSchema))),
+                    required: t.parameters.required ? t.parameters.required.includes(pName) : false
+                });
+            }
+        }
         return {
             temporaryTool: {
                 modelToolName: t.name,
                 description: t.description,
-                dynamicParameters: [
-                    {
-                        name: "args",
-                        location: "PARAMETER_LOCATION_BODY",
-                        schema: t.parameters ? JSON.parse(JSON.stringify(t.parameters)) : { type: "object" },
-                        required: true
-                    }
-                ],
+                dynamicParameters: dynamicParameters,
                 client: {}
             }
         };
@@ -1900,9 +1920,15 @@ async function runUltravoxMode(gen) {
               try { parsedArgs = JSON.parse(parsedArgs); } catch(e) { parsedArgs = {}; }
           }
           parsedArgs = parsedArgs || {};
-          if (UI_TOOLS.has(t.name)) return executeUiTool(t.name, parsedArgs);
-          if (PEOPLE_TOOLS.has(t.name)) return await executePeopleTool(t.name, parsedArgs);
-          return robot.execute(t.name, parsedArgs);
+          let result;
+          if (UI_TOOLS.has(t.name)) result = executeUiTool(t.name, parsedArgs);
+          else if (PEOPLE_TOOLS.has(t.name)) result = await executePeopleTool(t.name, parsedArgs);
+          else result = robot.execute(t.name, parsedArgs);
+          
+          if (typeof result !== 'string') {
+              try { result = JSON.stringify(result); } catch(e) { result = "success"; }
+          }
+          return result;
       });
   }
   
