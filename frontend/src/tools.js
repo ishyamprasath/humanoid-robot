@@ -174,6 +174,21 @@ export function buildTools() {
             required: ["emotion"],
           },
         },
+        {
+          name: "execute_gesture",
+          description: "Perform a specific physical gesture using the robot arm. This triggers a pre-programmed animation on the robot.",
+          parameters: {
+            type: "OBJECT",
+            properties: {
+              gesture_name: {
+                type: "STRING",
+                enum: ["hi", "clap", "pickupdemo", "rotate", "yes"],
+                description: "The gesture to perform."
+              }
+            },
+            required: ["gesture_name"]
+          }
+        },
       ],
     },
   ];

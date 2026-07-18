@@ -62,6 +62,10 @@ relay.on('toggle_transcript', (payload) => {
     }
 });
 
+relay.on('test_gesture', (payload) => {
+    executeGesture({ gesture_name: payload.gesture });
+});
+
 // WebRTC Streaming to Control Dashboard
 let rtcPeerConnection = null;
 
@@ -476,6 +480,28 @@ async function executePeopleTool(name, args) {
   }
 }
 const PEOPLE_TOOLS = new Set(["remember_person", "remember_fact", "forget_person"]);
+
+const GESTURE_TOOLS = new Set(["execute_gesture"]);
+async function executeGesture(args) {
+  const gestureMap = {
+    "hi": "/gestureHi",
+    "clap": "/gestureClap",
+    "pickupdemo": "/gesturePickupDemo",
+    "rotate": "/gestureRotate",
+    "yes": "/gestureYes"
+  };
+  const g = args.gesture_name;
+  if (!gestureMap[g]) return { status: "error", reason: `Unknown gesture "${g}"` };
+  
+  try {
+    const url = `http://10.235.127.62${gestureMap[g]}`;
+    await fetch(url, { method: 'GET', mode: 'no-cors' });
+    logAction(`🤖 gesture executed: ${g}`);
+    return { status: "success", gesture: g };
+  } catch(e) {
+    return { status: "error", reason: String(e) };
+  }
+}
 
 // ----------------------------------------------------------
 // UI tools — drive the on-screen LED face (no robot/people side effects)
@@ -1827,6 +1853,8 @@ function handleServerMessage(msg) {
           ? executeUiTool(fc.name, fc.args || {})
           : PEOPLE_TOOLS.has(fc.name)
           ? await executePeopleTool(fc.name, fc.args || {})
+          : GESTURE_TOOLS.has(fc.name)
+          ? await executeGesture(fc.args || {})
           : robot.execute(fc.name, fc.args || {}),
       },
     }))).then((functionResponses) => {
@@ -1923,6 +1951,7 @@ async function runUltravoxMode(gen) {
           let result;
           if (UI_TOOLS.has(t.name)) result = executeUiTool(t.name, parsedArgs);
           else if (PEOPLE_TOOLS.has(t.name)) result = await executePeopleTool(t.name, parsedArgs);
+          else if (GESTURE_TOOLS.has(t.name)) result = await executeGesture(parsedArgs);
           else result = robot.execute(t.name, parsedArgs);
           
           if (typeof result !== 'string') {

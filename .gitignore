@@ -21,29 +21,6 @@ __pycache__/
 .DS_Store
 Thumbs.db
 .vscode/
-# secrets
-.env
-.env.local
-.env.*.local
-
-# node
-node_modules/
-npm-debug.log
-yarn-error.log
-
-# python
-.venv/
-venv/
-__pycache__/
-*.py[cod]
-
-# logs
-*.log
-
-# editor / OS
-.DS_Store
-Thumbs.db
-.vscode/
 .idea/
 
 # local vendor bundles
@@ -61,11 +38,12 @@ start_robot.bat
 
 # Session log files and directories
 session-2026*
-conv-log/
-actions-log/
-task-log/
-**/conv-log/
-**/actions-log/
-**/task-log/
+logs/
 
 Docs/
+
+# ROS 2 / colcon build artifacts
+ros2_ws/build/
+ros2_ws/install/
+ros2_ws/log/
+**/*.egg-info/

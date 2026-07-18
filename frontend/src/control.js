@@ -132,6 +132,10 @@ if (els.faceTranscriptBtn) {
     });
 }
 
+document.getElementById('testGestureBtn')?.addEventListener('click', () => {
+    relay.publish('test_gesture', { gesture: 'hi' });
+});
+
 els.powerBtn.addEventListener('click', () => {
     isPowerOn = !isPowerOn;
     relay.publish('power', { on: isPowerOn });

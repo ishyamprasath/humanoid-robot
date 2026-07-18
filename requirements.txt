@@ -15,3 +15,8 @@ pyserial>=3.5              # ESP32 hardware bridge over USB serial
 insightface>=0.7.3
 onnxruntime
 scipy
+
+# Frontend / Server dependencies
+fastapi
+aiohttp
+uvicorn

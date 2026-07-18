@@ -19,10 +19,12 @@ app.add_middleware(
 
 # Get the path to this file's folder (frontend folder)
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
-# Logs can be stored in the root folder or frontend folder
-CONV_DIR = os.path.join(ROOT_DIR, "conv-log")
-TASK_DIR = os.path.join(ROOT_DIR, "task-log")
-ACT_DIR = os.path.join(ROOT_DIR, "actions-log")
+# Logs are now stored in the root logs directory
+PARENT_DIR = os.path.dirname(ROOT_DIR)
+LOGS_DIR = os.path.join(PARENT_DIR, "logs")
+CONV_DIR = os.path.join(LOGS_DIR, "conv-log")
+TASK_DIR = os.path.join(LOGS_DIR, "task-log")
+ACT_DIR = os.path.join(LOGS_DIR, "actions-log")
 
 # Ensure directories exist
 for d in [CONV_DIR, TASK_DIR, ACT_DIR]:
