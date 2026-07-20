@@ -17,9 +17,6 @@ __pycache__/
 # logs
 *.log
 
-# claude local settings
-.claude/settings.local.json
-
 # editor / OS
 .DS_Store
 Thumbs.db
@@ -28,11 +25,25 @@ Thumbs.db
 
 # local vendor bundles
 nexabot/.vendor/
+Project_Summary.md
 
-# faceapi models (generated on postinstall)
-frontend/public/models/
+# Ignored face identification documentation
+backend/face_identification/FaceID_Gemini_merge.md
+backend/face_identification/face_id_windows_demo_plan.md
+backend/face_identification/robo-README.md
+backend/face_identification/vision_project_summary.md
 
-# frontend build
-frontend/dist/
-conv-log
-actions-log
+# Startup scripts
+start_robot.bat
+
+# Session log files and directories
+session-2026*
+logs/
+
+Docs/
+
+# ROS 2 / colcon build artifacts
+ros2_ws/build/
+ros2_ws/install/
+ros2_ws/log/
+**/*.egg-info/

@@ -1,0 +1,49 @@
+/* frontend/css/face.css */
+body.face-app {
+    margin: 0;
+    overflow: hidden;
+    background: #000;
+}
+
+#faceWorkspace {
+    display: flex;
+    width: 100vw;
+    height: 100vh;
+}
+
+#cameraContainer, #faceContainer {
+    transition: all 0.3s ease;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    position: relative;
+}
+
+/* Face Only Mode */
+.mode-face #cameraContainer {
+    display: none;
+    width: 0;
+}
+.mode-face #faceContainer {
+    width: 100vw;
+}
+
+/* Camera Only Mode */
+.mode-camera #faceContainer {
+    display: none;
+    width: 0;
+}
+.mode-camera #cameraContainer {
+    width: 100vw;
+}
+
+/* Split Mode */
+.mode-split #cameraContainer, .mode-split #faceContainer {
+    width: 50vw;
+    display: flex;
+}
+.mode-split #cameraFeed, .mode-split #cameraOverlay {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+}

@@ -1,94 +1,108 @@
-# 🤖 Robot — Cognitive Core
+<div align="center">
+  <h1>🤖 Browser-Native Humanoid Robot</h1>
+  <p><strong>A Zero-Latency, Thick-Client Cognitive Core for Robotics</strong></p>
+</div>
 
-**Browser-native · Gemini 3.1 Flash Live · zero backend.**
+<br />
 
-Real-time voice + vision conversation on the **Gemini Live API** (voice
-**Kore**), running entirely in the browser. The camera is the robot's eyes
-(native ~30 fps on screen, throttled frames to the model), the mic is its
-ears (16 kHz PCM via AudioWorklet, hardware echo-cancelled so you can barge
-in mid-sentence), and WebAudio is its voice. Tool calls drive a world-frame
-robot simulator — the swap point for real hardware later.
+Welcome to the future of robotics architecture! This project implements a **zero-backend, browser-native** cognitive core for a humanoid robot. 
 
-```
-┌───────────────────── browser (frontend/) ─────────────────────┐
-│  🎙 mic (AudioWorklet, AEC) ─┐            ┌─▶ 🔊 WebAudio 24k  │
-│  📷 getUserMedia camera ─────┤            │    (barge-in)      │
-│     (native fps on screen)   ▼            │                    │
-│              Gemini Live WebSocket ───────┤                    │
-│              gemini-3.1-flash-live        │                    │
-│                     │ tool calls          │                    │
-│                     ▼                     │                    │
-│              Robot executor (world sim, task queue,            │
-│              world map + HUD — swap for ROS 2 later)           │
-└────────────────────────────────────────────────────────────────┘
-```
-
-No Python, no local server hop, no JPEG-over-WebSocket — one network
-connection, straight from the browser to Gemini.
+Instead of routing camera feeds and audio streams through complex Python backend servers, **the browser IS the robot's brain**. It directly handles vision, speech, reasoning, and physical hardware control.
 
 ---
 
-## ⚡ Quick start
+## 🌟 Key Features
 
-```powershell
-cd nexabot/frontend
-copy .env.example .env      # then edit .env — add your Gemini API key
-npm install
-npm run dev
+* **Browser-Native Cognitive Core:** The AI runs entirely in the frontend using the `@google/genai` SDK to connect directly to the **Gemini Live API** via WebRTC.
+* **Zero-Latency Senses:** 
+  * **Vision:** Uses native `getUserMedia` to capture video, dynamically throttling and uploading JPEG frames directly to the multimodal AI.
+  * **Hearing & Speech:** Uses native WebAudio and AudioWorklet APIs for instant conversational latency and barge-in support.
+* **On-Device Memory:** Face Identification runs completely locally. Known faces and conversation memories are stored directly in the browser's `IndexedDB`.
+* **Direct Hardware Integration:** The browser commands the robot's physical body (ESP32 microcontrollers) using local network HTTP requests.
+* **Automated Kiosk Mode:** A single batch script builds the UI, starts a lightweight server, and automatically pops open a dual-monitor dashboard in Microsoft Edge.
+
+---
+
+## 🛠️ Engineering Deep Dive
+
+The legacy Python backend has been completely archived. The robot now relies on a streamlined thick-client architecture.
+
+### The Data Flow Loop
+Because the browser manages everything, the latency loop is incredibly short:
+1. **Sensory Input:** `Webcam/Mic` ➡️ `Browser APIs (getUserMedia / AudioWorklets)`.
+2. **AI Processing:** Browser ➡️ `WebRTC / WebSockets` ➡️ `Gemini Live / Ultravox`.
+3. **Action Generation:** AI streams back a `JSON Tool Call` (e.g., `execute_gesture("wave")`).
+4. **Physical Actuation:** Browser intercepts the tool call and fires a `fetch()` request directly to the local ESP32 IP, moving the physical arm.
+
+### Frontend Module Breakdown (`frontend/src/`)
+* **`main.js`**: The core controller. Manages the WebRTC connections, handles the AI session state, and renders the telemetry dashboard.
+* **`tools.js`**: Maps AI decisions to physical actions. Contains the HTTP fetch logic for robot movement and the memory triggers.
+* **`relay.js`**: Acts as a state bridge, synchronizing data between the control dashboard (`control.html`) and the robot's physical face display (`face.html`).
+* **`face.html` / `control.html`**: The two distinct UI windows. The face is displayed on an 8" screen on the robot itself, while the control dashboard acts as the developer HUD.
+
+### Why use a Python Server?
+Even though the AI runs in the browser, we use a tiny **FastAPI Server** (`frontend/main.py`) for three specific reasons:
+1. **CORS & Static Serving:** Safely serves the Vite-built HTML/JS files to the browser.
+2. **Local Logging:** A Vite plugin (`vite-plugin-robot-logger`) intercepts console logs and writes them to persistent text files in the `/logs` directory on your hard drive.
+3. **API Key Security:** In production deployments, it proxies secure requests so API keys don't leak to public clients (though this project is designed for secure, local kiosk usage).
+
+### Hardware Endpoints
+The frontend is hardcoded to talk to an ESP32 microcontroller at `10.235.127.62`. When the AI decides to move, the browser triggers endpoints like:
+* `GET http://10.235.127.62/gestureHi` (Waves hand)
+* `GET http://10.235.127.62/gestureClap` (Claps)
+
+*(Note: If your robot is on a different subnet, update the IP address in `tools.js`)*.
+
+---
+
+## 🚀 Environment Setup
+
+### 1. Prerequisites
+Ensure you have the following installed on your machine:
+* **Python 3.10+**
+* **Node.js 18+**
+* A functioning Webcam and Microphone.
+* Microsoft Edge (for automated kiosk-mode window positioning).
+
+### 2. Configure API Keys
+Copy the `.env.example` file to `.env` in the root directory. Fill in your keys:
+```env
+# Gemini Live API — voice + vision brain (Get one at: https://aistudio.google.com)
+VITE_GEMINI_API_KEY=your_gemini_key_here
+VITE_GEMINI_MODEL=gemini-3.1-flash-live-preview
+VITE_VOICE_NAME=Kore
+
+# Ultravox API (Alternative voice engine)
+VITE_ULTRAVOX_API_KEY=your_ultravox_key_here
+
+# Local Web Server Port
+PORT=8000
 ```
 
-Open **http://localhost:5173**, press **Power On**, allow mic + camera,
-and talk.
+### 3. Installation
+Double-click `click_to_install.bat`. This one-time setup script will:
+- Create a Python virtual environment (`.venv`).
+- Install FastAPI and Uvicorn.
+- Run `npm install` for the Vite frontend.
 
-- *"What can you see right now?"* — describes the live camera frame
-- *"Look at the blue cup"* — look-at reticle + camera→world projection
-- *"Navigate to +1.5, -0.8"* — absolute world-frame move
-- *"Fetch the water bottle"* — opens a real **task** with goal + priority
-- Interrupt mid-sentence — echo-cancelled full duplex, barge-in just works
-- Type in the input box any time instead of talking
+---
 
-Requires Node 18+ and a Chromium-based browser (Chrome/Edge).
+## 🕹️ Running the Robot
 
-## 📁 Layout
+Double-click `start.bat` to bring the robot to life! 
+1. Vite will compile the frontend assets.
+2. The FastAPI server will spin up on `localhost:8000`.
+3. Microsoft Edge will automatically launch two side-by-side windows:
+   - **The Face Display:** Drag this to the robot's physical screen.
+   - **The Control Dashboard:** Keep this on your main monitor to monitor logs, manual overrides, and camera feeds.
 
-| Path | What it is |
-|---|---|
-| [`frontend/src/main.js`](frontend/src/main.js) | Orchestrator — Live session, camera, UI, reconnect |
-| [`frontend/src/config.js`](frontend/src/config.js) | Env loading, audio/video/world settings, **persona** |
-| [`frontend/src/tools.js`](frontend/src/tools.js) | 5 tool declarations (camera-frame + world-frame, task-based) |
-| [`frontend/src/audio.js`](frontend/src/audio.js) | Mic capture (16 kHz PCM16) + speaker playback + barge-in |
-| [`frontend/src/pcm-worklet.js`](frontend/src/pcm-worklet.js) | Realtime-thread PCM16 converter |
-| [`frontend/src/robot.js`](frontend/src/robot.js) | **The hardware swap point** — tool executor, world model, tasks |
-| [`firmware/`](firmware) | ESP32/Arduino sketch for the serial protocol |
+---
 
-## 🔐 Secrets
+## 🔧 Troubleshooting & Customization
 
-Keys live in `frontend/.env` (gitignored): `VITE_GEMINI_API_KEY` from
-https://aistudio.google.com/app/apikey.
+> [!WARNING]
+> **Permissions Are Critical:** Because this is a browser-native application, **you must grant Microphone and Camera permissions** when the Edge browser opens. If you deny them, the robot will be blind and deaf.
 
-⚠️ The key ships to the browser — fine for a local robot display / kiosk,
-**never host this publicly with a real key**.
-
-## 🎛 Tuning
-
-`frontend/.env`:
-- `VITE_MODEL_FRAME_FPS` (default 2) — frames/sec uploaded to Gemini.
-  The on-screen feed is native fps regardless; vision tokens are the main
-  latency/cost lever, so keep this low.
-- `VITE_VOICE_NAME` (default Kore), `VITE_GEMINI_MODEL`.
-
-## 🖥 Robot's 8" display (kiosk)
-
-```bash
-npm run build                      # frontend/dist
-chromium --kiosk --app=http://localhost:5173
-```
-
-getUserMedia needs a secure context: `localhost` works out of the box; over
-the LAN use HTTPS or `chromium --unsafely-treat-insecure-origin-as-secure=...`.
-
-## 🔧 Hardware later
-
-`frontend/src/robot.js` simulates a 4 m × 4 m world today. On the real robot,
-map the same five tool calls to motors — Web Serial (ESP32 over USB works in
-Chrome), or a ROS 2 bridge. Nothing in the brain, audio, or UI changes.
+* **Popup Blockers:** `start.bat` tries to open multiple windows. If Edge blocks the popups, allow popups for `localhost` in your browser settings.
+* **Customizing the Persona:** The robot's personality is defined by a System Prompt. You can edit this directly in the frontend source code before starting the robot to change how it behaves.
+* **Face Database:** The robot uses `IndexedDB` to store faces locally. If you want to wipe the robot's memory of people, simply open the Edge DevTools (F12) -> Application -> IndexedDB, and delete the database.

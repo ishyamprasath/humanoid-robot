@@ -8,10 +8,8 @@
 // the Robot world model. One process, one network hop.
 // ============================================================
 
-import { GoogleGenAI, Modality } from "@google/genai";
-import { MicCapture, SpeakerPlayer } from "./audio.js";
 import {
-  API_KEY, CAMERA_HFOV, MAX_RETRIES, MODEL, MODEL_FRAME_FPS,
+  API_KEY, ULTRAVOX_API_KEY, CAMERA_HFOV, MAX_RETRIES, MODEL, MODEL_FRAME_FPS,
   MODEL_FRAME_JPEG_QUALITY, MODEL_FRAME_WIDTH, REGREET_COOLDOWN_MS,
   RETRY_DELAY_MS, ROOM_HALF_METERS as ROOM_HALF, SEND_SAMPLE_RATE,
   SYSTEM_PROMPT, VOICE_NAME,
@@ -20,6 +18,106 @@ import { FaceEngine } from "./faces.js";
 import { PeopleStore } from "./people-store.js";
 import { Robot } from "./robot.js";
 import { buildTools } from "./tools.js";
+import { GoogleGenAI, Modality } from "@google/genai";
+import { MicCapture, SpeakerPlayer } from "./audio.js";
+import { relay } from "./relay.js";
+import { UltravoxSession } from "ultravox-client";
+
+relay.connect();
+
+relay.on('display_mode', (payload) => {
+    if (payload.mode) {
+        document.body.className = "face-app mode-" + payload.mode;
+    }
+});
+relay.on('power', (payload) => {
+    if (payload.on !== state.powerOn) {
+        if (payload.on) powerOn();
+        else powerOff();
+    }
+});
+relay.on('mute', (payload) => {
+    if (state.muted !== payload.muted) els.muteBtn.click();
+});
+relay.on('text', (payload) => {
+    if (payload.text) {
+        els.textInput.value = payload.text;
+        sendText();
+    }
+});
+
+let requestedMode = 'auto';
+relay.on('llm_mode', (payload) => {
+    requestedMode = payload.mode;
+    logAction(`llm mode -> ${requestedMode}`);
+    if (state.powerOn) {
+        powerOff();
+        setTimeout(powerOn, 1000);
+    }
+});
+
+relay.on('toggle_transcript', (payload) => {
+    if (els.transcript) {
+        els.transcript.style.display = payload.show ? 'flex' : 'none';
+    }
+});
+
+relay.on('test_gesture', (payload) => {
+    executeGesture({ gesture_name: payload.gesture });
+});
+
+// WebRTC Streaming to Control Dashboard
+let rtcPeerConnection = null;
+
+async function initWebRTCSender() {
+    if (rtcPeerConnection) rtcPeerConnection.close();
+    rtcPeerConnection = new RTCPeerConnection({
+        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+    });
+
+    rtcPeerConnection.onicecandidate = (e) => {
+        if (e.candidate) relay.publish('webrtc_ice_face', { candidate: e.candidate });
+    };
+
+    if (camStream) {
+        camStream.getTracks().forEach(track => {
+            if (track.kind === 'video') {
+                const sender = rtcPeerConnection.addTrack(track, camStream);
+                const params = sender.getParameters();
+                if (!params.encodings) params.encodings = [{}];
+                params.encodings[0].maxFramerate = 15;
+                params.encodings[0].maxBitrate = 500000;
+                sender.setParameters(params).catch(e => console.warn('WebRTC setParameters failed:', e));
+            }
+        });
+    }
+
+    try {
+        const offer = await rtcPeerConnection.createOffer();
+        await rtcPeerConnection.setLocalDescription(offer);
+        relay.publish('webrtc_offer', { offer });
+    } catch (e) {
+        console.error('WebRTC offer error:', e);
+    }
+}
+
+relay.on('webrtc_request', () => {
+    if (camStream) initWebRTCSender();
+});
+
+relay.on('webrtc_answer', async (payload) => {
+    if (rtcPeerConnection && payload.answer) {
+        try { await rtcPeerConnection.setRemoteDescription(new RTCSessionDescription(payload.answer)); } 
+        catch (e) { console.error('WebRTC answer error:', e); }
+    }
+});
+
+relay.on('webrtc_ice_control', async (payload) => {
+    if (rtcPeerConnection && payload.candidate) {
+        try { await rtcPeerConnection.addIceCandidate(new RTCIceCandidate(payload.candidate)); } 
+        catch (e) { console.error('WebRTC ice error:', e); }
+    }
+});
 
 const $ = (id) => document.getElementById(id);
 const els = {
@@ -50,28 +148,56 @@ const state = {
   tasks: [],
   trail: [{ x: 0, y: 0 }],
   visitor: null,   // null | "unknown" | person name
-  faceBox: null,   // normalized {x,y,w,h,label} for the camera overlay
   speaking: false, // robot voice active (drives the mouth)
   expression: "neutral", // model-set emotion; the LED face eases toward it
 };
 
 // LED-face animation state (eased each frame toward the target expression).
 const face = {
-  eyeOpen: 1,      // 0 (blink shut) .. 1 (open)
-  mouthOpen: 0,    // 0 (closed) .. 1 (wide) — lip-sync amplitude
-  curve: 0.5,      // mouth emotion: 1 smile .. 0 flat .. -1 frown (eased)
-  eyeCurve: 0,     // eyelid emotion: >0 happy arc, <0 sad/angry (eased)
-  eyeScale: 1,     // eye size: >1 surprised, <1 squint (eased)
-  blinkUntil: 0,   // timestamp we blink until
-  nextBlink: 0,    // timestamp of the next scheduled blink
-  gaze: 0,         // horizontal pupil/eye drift for "thinking"/"listening"
+  eyeOpen: 1, vEyeOpen: 0,
+  mouthOpen: 0, vMouthOpen: 0,
+  curve: 0.5, vCurve: 0,
+  eyeCurve: 0, vEyeCurve: 0,
+  eyeScale: 1, vEyeScale: 0,
+  gazeX: 0, vGazeX: 0,
+  gazeY: 0, vGazeY: 0,
+  browH: 0, vBrowH: 0,
+  browA: 0, vBrowA: 0,
+  tilt: 0, vTilt: 0,
+  aMouth: 0, vAMouth: 0,
+  aEyeScale: 0, vAEyeScale: 0,
+  aBrowH: 0, vABrowH: 0,
+  intensity: 0.5, vIntensity: 0,
+  r: 52, vR: 0,
+  g: 222, vG: 0,
+  b: 244, vB: 0,
+  browAlpha: 0, vBrowAlpha: 0,
+  blinkUntil: 0,
+  nextBlink: 0,
 };
 
+// Clean up hot-reloaded stale instances
+if (window.activeWebSocket) {
+    console.log("🔌 Closing stale hot-reloaded WebSocket...");
+    try { window.activeWebSocket.close(); } catch(e){}
+}
+if (window.activeSpeechRecognition) {
+    console.log("🎙️ Stopping stale hot-reloaded SpeechRecognition...");
+    try { window.activeSpeechRecognition.stop(); } catch(e){}
+}
+
+let ws = null;
+let sttRec = null;
 let ai = null;
-let session = null;        // live Gemini session (null when off)
-let sessionGen = 0;        // guards stale callbacks after power-off
+let session = null;
 let mic = null;
 let player = null;
+const synth = window.speechSynthesis;
+let sessionGen = 0;        // guards stale callbacks after power-off
+let isSttProcessing = false;
+let audioCtx = null;       // Reusable AudioContext to avoid Chrome limit errors
+
+
 let camStream = null;
 let frameTimer = null;
 let retries = 0;
@@ -131,6 +257,7 @@ function setStatus(st, detail = "") {
   state.powerOn = st === "online" || st === "connecting";
   els.powerBtn.textContent = state.powerOn ? "Power Off" : "Power On";
   els.powerBtn.classList.toggle("danger", state.powerOn);
+  relay.publish("status", { state: st, detail });
 }
 
 function setMedia(up, label) {
@@ -145,6 +272,7 @@ function logAction(text) {
   els.actionLog.appendChild(div);
   els.actionLog.scrollTop = els.actionLog.scrollHeight;
   while (els.actionLog.children.length > 300) els.actionLog.removeChild(els.actionLog.firstChild);
+  relay.publish("log", { kind: "action", text });
 }
 
 function newLine(who, cls) {
@@ -158,14 +286,30 @@ function newLine(who, cls) {
   els.transcript.appendChild(div);
   return span;
 }
-
 function transcriptDelta(role, text) {
+  let isNew = false;
   if (role === "user") {
-    if (!userLine) userLine = newLine("You", "user");
+    if (!userLine) { userLine = newLine("You", "user"); isNew = true; }
     userLine.textContent += text;
+    relay.publish("transcript", { role, text: userLine.textContent, isNew });
   } else {
-    if (!botLine) botLine = newLine("Robot", "bot");
+    if (!botLine) { botLine = newLine("Robot", "bot"); isNew = true; }
     botLine.textContent += text;
+    relay.publish("transcript", { role, text: botLine.textContent, isNew });
+  }
+  els.transcript.scrollTop = els.transcript.scrollHeight;
+}
+
+function transcriptSet(role, text) {
+  let isNew = false;
+  if (role === "user") {
+    if (!userLine) { userLine = newLine("You", "user"); isNew = true; }
+    userLine.textContent = text;
+    relay.publish("transcript", { role, text: userLine.textContent, isNew });
+  } else {
+    if (!botLine) { botLine = newLine("Robot", "bot"); isNew = true; }
+    botLine.textContent = text;
+    relay.publish("transcript", { role, text: botLine.textContent, isNew });
   }
   els.transcript.scrollTop = els.transcript.scrollHeight;
 }
@@ -186,10 +330,12 @@ const robot = new Robot({
 
     // Log task event to server if this is execute_task and success
     if (name === "execute_task" && ok) {
+      const msg = `Task ${result.task_id} (${args.task_type}): "${args.description}" - priority: ${args.priority || "normal"}`;
       postLog("task", {
         event: "created",
-        message: `Task ${result.task_id} (${args.task_type}): "${args.description}" - priority: ${args.priority || "normal"}`
+        message: msg
       });
+      relay.publish("log", { kind: "task", text: `[CREATED] ${msg}` });
     }
   },
   onState: (snap) => {
@@ -211,10 +357,12 @@ const robot = new Robot({
       if (prev !== t.status) {
         lastTaskStatuses.set(t.id, t.status);
         if (prev) { // only log changes, not initial state
+          const msg = `Task ${t.id} (${t.type}) status changed from "${prev}" to "${t.status}"`;
           postLog("task", {
             event: "status_change",
-            message: `Task ${t.id} (${t.type}) status changed from "${prev}" to "${t.status}"`
+            message: msg
           });
+          relay.publish("log", { kind: "task", text: `[STATUS] ${msg}` });
         }
       }
     }
@@ -248,10 +396,9 @@ function timeContext() {
 
 function sendContext(text, complete) {
   try {
-    session?.sendClientContent({
-      turns: [{ role: "user", parts: [{ text }] }],
-      turnComplete: complete,
-    });
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'text', text: text }));
+    }
   } catch {}
 }
 
@@ -334,6 +481,28 @@ async function executePeopleTool(name, args) {
 }
 const PEOPLE_TOOLS = new Set(["remember_person", "remember_fact", "forget_person"]);
 
+const GESTURE_TOOLS = new Set(["execute_gesture"]);
+async function executeGesture(args) {
+  const gestureMap = {
+    "hi": "/gestureHi",
+    "clap": "/gestureClap",
+    "pickupdemo": "/gesturePickupDemo",
+    "rotate": "/gestureRotate",
+    "yes": "/gestureYes"
+  };
+  const g = args.gesture_name;
+  if (!gestureMap[g]) return { status: "error", reason: `Unknown gesture "${g}"` };
+  
+  try {
+    const url = `http://10.235.127.62${gestureMap[g]}`;
+    await fetch(url, { method: 'GET', mode: 'no-cors' });
+    logAction(`🤖 gesture executed: ${g}`);
+    return { status: "success", gesture: g };
+  } catch(e) {
+    return { status: "error", reason: String(e) };
+  }
+}
+
 // ----------------------------------------------------------
 // UI tools — drive the on-screen LED face (no robot/people side effects)
 // ----------------------------------------------------------
@@ -341,6 +510,7 @@ const UI_TOOLS = new Set(["set_expression"]);
 const EXPRESSIONS = new Set([
   "neutral", "happy", "excited", "curious",
   "thinking", "surprised", "sad", "love", "sleepy",
+  "angry", "confused", "cheeky", "bored", "scared", "sassy",
 ]);
 
 function executeUiTool(name, args) {
@@ -427,20 +597,351 @@ function startFrameUpload(gen) {
 }
 
 // ----------------------------------------------------------
-// Gemini Live session
+// Local LLM & Web Speech Integration
 // ----------------------------------------------------------
-async function powerOn() {
-  if (session || state.powerOn) return;
-  if (!API_KEY) {
-    setStatus("error", "VITE_GEMINI_API_KEY missing — copy .env.example to .env");
-    logAction("VITE_GEMINI_API_KEY missing in frontend/.env");
-    return;
-  }
 
-  // Initialize new logging session ID
-  const pad = (n) => String(n).padStart(2, "0");
-  const d = new Date();
-  currentSessionId = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+function initSpeechRecognition(wsRef) {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+        console.error("SpeechRecognition not supported in this browser");
+        logAction("SpeechRecognition not supported");
+        return null;
+    }
+    const rec = new SpeechRecognition();
+    rec.continuous = true;
+    rec.interimResults = true;
+    rec.lang = 'en-US';
+
+    let silenceTimer = null;
+    let latestTranscript = '';
+
+    rec.onstart = () => {
+        console.log("🎙️ Speech recognition active");
+        logAction("microphone hot");
+        isSttProcessing = false;
+        latestTranscript = '';
+    };
+
+    rec.onerror = (e) => {
+        console.error("🎙️ Speech recognition error:", e.error);
+        logAction(`mic error: ${e.error}`);
+    };
+
+    rec.onend = () => {
+        console.log("🎙️ Speech recognition disconnected");
+        if (silenceTimer) clearTimeout(silenceTimer);
+        // Auto-restart if ws is open, not muted, and we are NOT currently processing or speaking
+        if (ws && ws.readyState === WebSocket.OPEN && !state.muted && !isSttProcessing && !state.speaking) {
+            console.log("🎙️ Restarting Speech recognition...");
+            try { rec.start(); } catch(err) {
+                console.error("Failed to restart speech recognition:", err);
+            }
+        } else {
+            logAction("microphone off");
+        }
+    };
+
+    rec.onresult = (event) => {
+        if (isSttProcessing) return; // Ignore input if already processing
+        
+        let final = '';
+        let interim = '';
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+            if (event.results[i].isFinal) {
+                final += event.results[i][0].transcript;
+            } else {
+                interim += event.results[i][0].transcript;
+            }
+        }
+        
+        let currentText = final || interim;
+        if (currentText) {
+            latestTranscript = currentText.trim();
+        }
+
+        // Reset the silence timer
+        if (silenceTimer) clearTimeout(silenceTimer);
+        
+        if (latestTranscript && wsRef && wsRef.readyState === WebSocket.OPEN && !state.muted) {
+            silenceTimer = setTimeout(() => {
+                isSttProcessing = true;
+                console.log("🎙️ Smart Silence Detected! Sending:", latestTranscript);
+                transcriptDelta("user", latestTranscript);
+                userLine = null;
+                wsRef.send(JSON.stringify({ type: 'text', text: latestTranscript }));
+                
+                // Stop the recognition immediately to prevent further result events
+                try { rec.stop(); } catch(e){}
+            }, 1400); // 1.4 seconds of silence to balance speed and breath pauses
+        }
+    };
+    
+    return rec;
+}
+
+function playRobotBeep() { 
+    try {
+        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+        if (!AudioContextClass) return;
+        if (!audioCtx) {
+            audioCtx = new AudioContextClass();
+        }
+        if (audioCtx.state === 'suspended') {
+            audioCtx.resume();
+        }
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        
+        osc.type = 'sine';
+        // Classic high-pitched double-beep
+        osc.frequency.setValueAtTime(880, audioCtx.currentTime);
+        osc.frequency.setValueAtTime(1100, audioCtx.currentTime + 0.08);
+        
+        gain.gain.setValueAtTime(0.08, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.22);
+        
+        osc.start();
+        osc.stop(audioCtx.currentTime + 0.22);
+    } catch(e) {
+        console.error("Failed to play robot beep:", e);
+    }
+}
+
+function cleanSpeechText(text) {
+    if (!text) return "";
+    
+    let clean = text
+        // Strip emojis and symbols that speech engines pronounce literally
+        .replace(/[\u{1F300}-\u{1F9FF}\u{2600}-\u{27BF}]/gu, '')
+        // Strip asterisks (*) and underscores (_) commonly outputted by LLMs for formatting
+        .replace(/\*/g, '')
+        .replace(/_/g, '')
+        // Replace double hyphens with a space
+        .replace(/--/g, ' ')
+        // Clean up stuttering notations like "Wh.. what" or "w-w-what"
+        .replace(/\b(\w+)\.\.\s*\1\b/gi, '$1')
+        .replace(/\b\w+-\w+-\b/gi, '')
+        .replace(/\b(\w)-\1-(\w+)\b/gi, '$2')
+        .replace(/\b(\w)-(\w+)\b/gi, '$2')
+        .replace(/\b(\w)\.\.(\w+)\b/gi, (match, g1, g2) => {
+            if (g2.startsWith(g1.toLowerCase()) || g2.startsWith(g1.toUpperCase())) {
+                return g2;
+            }
+            return match;
+        })
+        .replace(/\bwh\.\.\s*what\b/gi, 'what')
+        .replace(/\b(\w+)-\1\b/gi, '$1')
+        // Replace multiple dots (e.g. "hello.. how") with space/comma
+        .replace(/\.{2,}/g, ' ')
+        // Clean up extra spacing
+        .replace(/\s+/g, ' ')
+        .trim();
+        
+    return clean;
+}
+
+function speak(text, prosody = {}, onStart, onEnd) {
+    synth.cancel(); // Stop current speech
+    
+    // Stop the mic immediately so it doesn't listen during playback
+    if (sttRec) {
+        try { sttRec.stop(); } catch(e){} 
+    }
+
+    // Play robot beep sound effect if text contains "beep" or "boop"
+    const hasBeeps = /beep|boop/i.test(text);
+    if (hasBeeps) {
+        playRobotBeep();
+    }
+
+    // Clean up stutters and strip beep/boop words from speech synthesis
+    let cleanText = cleanSpeechText(text)
+        .replace(/\bbeep\b/gi, '')
+        .replace(/\bboop\b/gi, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    const utterance = new SpeechSynthesisUtterance(cleanText);
+    
+    const voices = synth.getVoices();
+    const preferredVoices = [
+        'Microsoft Sonia Online (Natural)',
+        'Microsoft Aria Online (Natural)',
+        'Microsoft Jenny Online (Natural)',
+        'Google US English',
+        'Samantha',
+        'Alex'
+    ];
+
+    let selectedVoice = voices.find(v => v.lang.startsWith('en'));
+    for (const name of preferredVoices) {
+        const found = voices.find(v => v.name.includes(name));
+        if (found) {
+            selectedVoice = found;
+            break;
+        }
+    }
+
+    if (selectedVoice) utterance.voice = selectedVoice;
+    
+    // Apply LLM prosody formatting
+    utterance.pitch = 0.5 + (prosody.pitch || 0.5);
+    utterance.rate = Math.max(0.5, Math.min(2, prosody.speed || 1.0));
+    utterance.volume = Math.max(0, Math.min(1, prosody.volume || 0.9));
+    
+    let safetyTimeout = null;
+    const cleanup = () => {
+        if (safetyTimeout) {
+            clearTimeout(safetyTimeout);
+            safetyTimeout = null;
+        }
+        state.speaking = false;
+        els.speakingDot?.classList.remove("active");
+        
+        // Restart speech recognition after speech finishes
+        isSttProcessing = false;
+        if (sttRec && ws && ws.readyState === WebSocket.OPEN && !state.muted) {
+            console.log("🎙️ Speech finished/reset. Restarting mic...");
+            try { sttRec.start(); } catch(e){}
+        }
+    };
+
+    utterance.onstart = () => {
+        state.speaking = true;
+        els.speakingDot?.classList.add("active");
+        if (onStart) onStart();
+        
+        // Safety timeout: dynamic duration based on character count (approx 12 characters per second + 8s buffer)
+        const safetyDuration = Math.max(15000, (cleanText.length / 12) * 1000 + 8000);
+        safetyTimeout = setTimeout(() => {
+            console.warn("🎙️ Speech synthesis took too long or got stuck. Forcing cleanup.");
+            synth.cancel();
+            cleanup();
+            if (onEnd) onEnd();
+        }, safetyDuration);
+    };
+
+    utterance.onend = () => {
+        cleanup();
+        if (onEnd) onEnd();
+    };
+
+    utterance.onerror = (err) => {
+        console.error("SpeechSynthesis error:", err);
+        cleanup();
+        if (onEnd) onEnd();
+    };
+    
+    // Wrap speak in a setTimeout to avoid Chrome SpeechSynthesis queue bug
+    setTimeout(() => {
+        synth.speak(utterance);
+        
+        // Fallback: If onstart is never fired (swallowed completely by browser), force cleanup after 4.5s
+        // This allows slow online natural voices (Microsoft Edge) to fetch audio without false triggers
+        safetyTimeout = setTimeout(() => {
+            if (!state.speaking) {
+                console.warn("🎙️ Speech onstart never fired. Swallowed by browser? Forcing cleanup.");
+                cleanup();
+                if (onEnd) onEnd();
+            }
+        }, 4500);
+    }, 100);
+}
+
+let micStream = null;
+let micAnalyser = null;
+let micSource = null;
+
+async function initBargeInAnalyser() {
+    try {
+        if (!audioCtx) {
+            const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+            audioCtx = new AudioContextClass();
+        }
+        if (audioCtx.state === 'suspended') {
+            await audioCtx.resume();
+        }
+        
+        micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        micSource = audioCtx.createMediaStreamSource(micStream);
+        micAnalyser = audioCtx.createAnalyser();
+        micAnalyser.fftSize = 256;
+        micSource.connect(micAnalyser);
+        
+        const bufferLength = micAnalyser.frequencyBinCount;
+        const dataArray = new Uint8Array(bufferLength);
+        
+        function checkVolume() {
+            if (!state.powerOn) return; // Stop checking if powered off
+            
+            if (state.speaking && micAnalyser) {
+                micAnalyser.getByteTimeDomainData(dataArray);
+                
+                let sum = 0;
+                for (let i = 0; i < bufferLength; i++) {
+                    const deviation = (dataArray[i] - 128) / 128;
+                    sum += deviation * deviation;
+                }
+                const rms = Math.sqrt(sum / bufferLength);
+                
+                // Volume threshold (0.12 requires firm speaking or clap close to mic)
+                const BARGE_IN_THRESHOLD = 0.12;
+                if (rms > BARGE_IN_THRESHOLD) {
+                    console.log("🎙️ Interruption detected! RMS:", rms);
+                    handleBargeIn();
+                }
+            }
+            requestAnimationFrame(checkVolume);
+        }
+        
+        checkVolume();
+    } catch(e) {
+        console.error("Failed to initialize barge-in analyzer:", e);
+    }
+}
+
+function handleBargeIn() {
+    // 1. Halt speech immediately
+    synth.cancel();
+    
+    // 2. Change expression to surprised
+    targetState = setEmotion("surprise", 0.8);
+    
+    // 3. Update transcript to show interruption
+    transcriptDelta("robot", " [interrupted]...");
+    botLine = null; // reset line boundary
+    
+    // 4. Force speech recognition to restart immediately
+    isSttProcessing = false;
+    state.speaking = false;
+    els.speakingDot?.classList.remove("active");
+    
+    if (sttRec) {
+        try { sttRec.stop(); } catch(e){}
+    }
+}
+
+async function powerOn() {
+  if (ws || state.powerOn) return;
+  
+  // Initialize barge-in analyser
+  await initBargeInAnalyser();
+  
+  // Wipe all saved face embeddings and memories to start completely fresh from scratch
+  await peopleStore.clearAll();
+  await faceEngine.refreshMatcher();
+  
+  // Reuse existing sessionId from sessionStorage if present (handles refreshes)
+  let sessionId = sessionStorage.getItem("robot_session_id");
+  if (!sessionId) {
+    const pad = (n) => String(n).padStart(2, "0");
+    const d = new Date();
+    sessionId = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+    sessionStorage.setItem("robot_session_id", sessionId);
+  }
+  currentSessionId = sessionId;
   lastTaskStatuses.clear();
 
   retries = 0;
@@ -449,161 +950,150 @@ async function powerOn() {
 
 async function connect() {
   const gen = ++sessionGen;
-  setStatus("connecting", "waking up…");
-
-  // media first — mic & camera in parallel
-  player = new SpeakerPlayer({
-    onSpeaking: (active) => {
-      state.speaking = active;
-      els.speakingDot?.classList.toggle("active", active);
-    },
-  });
-  await player.resume();
-
-  mic = new MicCapture({
-    onChunk: (bytes) => {
-      if (gen !== sessionGen || !session) return;
+  
+  // Clean up any existing WebSocket cleanly before starting a new connection
+  if (ws) {
       try {
-        session.sendRealtimeInput({
-          audio: { data: b64FromBytes(bytes), mimeType: `audio/pcm;rate=${SEND_SAMPLE_RATE}` },
-        });
-      } catch {}
-    },
-    onLevel: (rms) => {
-      currentVolume = rms;
-    },
-  });
-
-  let micOk = true;
-  try {
-    await mic.start();
-    mic.setMuted(state.muted);
-  } catch (e) {
-    micOk = false;
-    logAction(`mic unavailable — ${e.name || e} (text chat still works)`);
+          ws.onclose = null;
+          ws.close();
+      } catch(e){}
+      ws = null;
   }
-  // Camera is already running from bootCamera() at page load; just update the media pill.
-  const camOk = !!camStream;
-  setMedia(micOk && camOk, micOk && camOk ? "Media ✓" : micOk ? "No camera" : camOk ? "No mic" : "No media");
-  if (micOk) logAction(`microphone hot · ${mic.label()} · echo-cancelled (barge-in enabled)`);
-
-  ai = new GoogleGenAI({ apiKey: API_KEY, httpOptions: { apiVersion: "v1beta" } });
-  logAction(`connecting -> ${MODEL} · voice ${VOICE_NAME}`);
+  
+  setStatus("connecting", "waking up…");
+  logAction(`connecting -> Backend`);
 
   try {
-    session = await ai.live.connect({
-      model: MODEL,
-      config: {
-        responseModalities: [Modality.AUDIO],
-        speechConfig: {
-          voiceConfig: { prebuiltVoiceConfig: { voiceName: VOICE_NAME } },
-        },
-        systemInstruction: SYSTEM_PROMPT,
-        tools: buildTools(),
-        inputAudioTranscription: {},
-        outputAudioTranscription: {},
-      },
-      callbacks: {
-        onopen: () => {
-          if (gen !== sessionGen) return;
-          retries = 0;
-          setStatus("online", "");
-          logAction("online — listening & watching");
-        },
-        onmessage: (msg) => {
-          if (gen !== sessionGen) return;
-          handleServerMessage(msg);
-        },
-        onerror: (e) => {
-          if (gen !== sessionGen) return;
-          logAction(`link error: ${e?.message || e}`);
-        },
-        onclose: (e) => {
-          if (gen !== sessionGen) return;
-          session = null;
-          maybeReconnect(e?.reason || "link closed");
-        },
-      },
-    });
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const socket = new WebSocket(`${protocol}//${window.location.host}/ws?sessionId=${currentSessionId}&mode=${requestedMode}`);
+    ws = socket;
+    window.activeWebSocket = socket;
+    
+    socket.onopen = () => {
+        if (gen !== sessionGen) return;
+        retries = 0;
+        setStatus("online", "");
+        logAction("online — listening & watching");
+        setMedia(true, "Media ✓");
+    };
+    
+    socket.onmessage = async (event) => {
+        if (gen !== sessionGen) return;
+        const data = JSON.parse(event.data);
+        
+        if (data.type === 'init') {
+            if (data.mode === 'gemini_live') {
+                console.log("🧠 Switching to Gemini Live mode!");
+                try {
+                    socket.onclose = null; // Prevent reconnect loop
+                    socket.close();
+                } catch(e){} 
+                if (ws === socket) ws = null;
+                runGeminiLiveMode(data.apiKey, data.model, data.voice, gen);
+            } else if (data.mode === 'ultravox' || requestedMode === 'ultravox') {
+                console.log("🧠 Switching to Ultravox mode!");
+                try {
+                    socket.onclose = null; // Prevent reconnect loop
+                    socket.close();
+                } catch(e){} 
+                if (ws === socket) ws = null;
+                runUltravoxMode(gen);
+            } else {
+                console.log("🧠 Staying in Gemma 4 mode!");
+                sttRec = initSpeechRecognition(socket);
+                window.activeSpeechRecognition = sttRec;
+                if (sttRec && !state.muted) {
+                    try { sttRec.start(); } catch(e){}
+                    logAction("microphone hot");
+                }
+            }
+            return;
+        }
+        
+        if (data.type === 'response') {
+            if (data.emotion) {
+                const emotionMap = {
+                    "happiness": "happy",
+                    "sadness": "sad",
+                    "curiosity": "curious",
+                    "surprise": "surprised",
+                    "fear": "scared",
+                    "anger": "angry"
+                };
+                const mappedEmotion = emotionMap[data.emotion.toLowerCase()] || data.emotion;
+                setExpression(mappedEmotion);
+            }
+            
+            if (data.speech_text) {
+                transcriptDelta("robot", data.speech_text);
+                botLine = null; // Reset botLine so next response starts a new line
+                speak(
+                    data.speech_text, 
+                    data.prosody || {},
+                    () => { 
+                        state.speaking = true;
+                        els.speakingDot?.classList.add("active");
+                    },
+                    () => { 
+                        state.speaking = false;
+                        els.speakingDot?.classList.remove("active");
+                    }
+                );
+            }
+        }
+    };
+    
+    socket.onerror = (e) => {
+        if (gen !== sessionGen) return;
+        logAction(`link error`);
+    };
+    
+    socket.onclose = (e) => {
+        if (gen !== sessionGen) return;
+        if (ws === socket) ws = null;
+        maybeReconnect(e?.reason || "link closed");
+    };
+    
   } catch (e) {
-    session = null;
+    ws = null;
     teardownMedia();
     setStatus("error", `connect failed: ${e?.message || e}`);
     logAction(`connect failed: ${e?.message || e}`);
     return;
   }
 
-  if (gen !== sessionGen) return; // powered off while connecting
-
   // Wipe all saved face embeddings and memories to start completely fresh from scratch
   await peopleStore.clearAll();
   await faceEngine.refreshMatcher();
-
-  if (camOk) {
-    startFrameUpload(gen);
-    logAction(`camera stream: native fps on screen · ${MODEL_FRAME_FPS} fps to the model`);
-    // Face engine already started at boot; just ensure it's running (no-op if already started).
-    if (faceEngine.ready && !faceEngine._timer) faceEngine.start(els.cameraFeed);
-  }
 
   const knownNames = [];
   const knownTxt = knownNames.length
     ? `People you already know by face: ${knownNames.join(", ")}.`
     : "You don't know anyone by face yet.";
-  session.sendClientContent({
-    turns: [{
-      role: "user",
-      parts: [{ text:
-        `(System boot complete. ${timeContext()} ${knownTxt} Say a short and warm "Hey!" or "Hey there!", matching the time of day, and wait for the user to respond.)` }],
-    }],
-    turnComplete: true,
-  });
-}
-
-function handleServerMessage(msg) {
-  if (msg.data) player?.play(bytesFromB64(msg.data));
-
-  const tc = msg.toolCall;
-  if (tc?.functionCalls?.length) {
-    Promise.all(tc.functionCalls.map(async (fc) => ({
-      id: fc.id,
-      name: fc.name,
-      response: {
-        result: UI_TOOLS.has(fc.name)
-          ? executeUiTool(fc.name, fc.args || {})
-          : PEOPLE_TOOLS.has(fc.name)
-          ? await executePeopleTool(fc.name, fc.args || {})
-          : robot.execute(fc.name, fc.args || {}),
-      },
-    }))).then((functionResponses) => {
-      try { session?.sendToolResponse({ functionResponses }); } catch {}
-    });
-  }
-
-  const sc = msg.serverContent;
-  if (sc) {
-    if (sc.inputTranscription?.text) transcriptDelta("user", sc.inputTranscription.text);
-    if (sc.outputTranscription?.text) transcriptDelta("robot", sc.outputTranscription.text);
-    if (sc.interrupted) {
-      player?.interrupt();
-      logAction("interrupted — user barge-in");
-      postLog("action", { type: "interrupt", message: "User barge-in interrupted playback" });
-    }
-    if (sc.turnComplete) {
-      if (userLine && userLine.textContent) {
-        postLog("conversation", { role: "user", text: userLine.textContent });
-      }
-      if (botLine && botLine.textContent) {
-        postLog("conversation", { role: "robot", text: botLine.textContent });
-      }
-      userLine = null;
-      botLine = null;
-    }
-  }
+  
+  // Try to send boot context once connected (disabled to prevent double responses on startup)
+  /*
+  setTimeout(() => {
+    sendContext(
+      `(System boot complete. ${timeContext()} ${knownTxt} Say a short and warm "Hey!" or "Hey there!", matching the time of day, and wait for the user to respond.)`,
+      true
+    );
+  }, 1000);
+  */
 }
 
 function maybeReconnect(reason) {
   if (!state.powerOn) return;
+  
+  // Prevent reconnect loop if Gemini Live (WebRTC) connection fails
+  if (ws === null) {
+      console.error("🔌 Gemini Live connection failed:", reason);
+      logAction(`Gemini Live connection failed: ${reason}`);
+      setStatus("error", `Live API failed: ${reason}`);
+      teardownMedia();
+      return;
+  }
+  
   retries += 1;
   if (retries > MAX_RETRIES) {
     teardownMedia();
@@ -619,33 +1109,94 @@ function maybeReconnect(reason) {
 }
 
 function teardownMedia() {
-  if (frameTimer) { clearInterval(frameTimer); frameTimer = null; }
-  // Keep camera + face detection running after power-off so the LED face
-  // and face box stay live. Only stop mic + speaker (AI-session media).
-  mic?.stop(); mic = null;
-  player?.stop(); player = null;
+  if (sttRec) {
+    try { sttRec.stop(); } catch(e){}
+    sttRec = null;
+  }
+  synth.cancel();
   state.speaking = false;
   els.speakingDot?.classList.remove("active");
+
+  // Clean up Gemini Live captures
+  if (mic) {
+    try { mic.stop(); } catch(e){}
+    mic = null;
+  }
+  
+  if (player && player._ctx) {
+      try { player._ctx.close(); } catch(e){}
+      player = null;
+  }
+  if (player) {
+    try { player.stop(); } catch(e){}
+    player = null;
+  }
+  if (frameTimer) {
+    clearInterval(frameTimer);
+    frameTimer = null;
+  }
 }
 
 function powerOff() {
   sessionGen++; // invalidate all in-flight callbacks
-  try { session?.close(); } catch {}
+  try { if (ws) ws.close(); } catch {}
+  ws = null;
+
+  // Clean up AI session (Gemini or Ultravox)
+  try {
+      if (session) {
+          if (typeof session.leaveCall === 'function') session.leaveCall();
+          if (typeof session.close === 'function') session.close();
+      }
+  } catch(e){}
   session = null;
+
   teardownMedia();
+  
+  // Clear the session storage on manual Power Off
+  sessionStorage.removeItem("robot_session_id");
   currentSessionId = null;
+  
   setStatus("offline", "");
   setMedia(false, "Media off");
   logAction("cognitive core shut down");
+
+  // Stop mic stream if active
+  if (micStream) {
+      try {
+          micStream.getTracks().forEach(track => track.stop());
+      } catch(e){}
+      micStream = null;
+  }
 }
 
 // ----------------------------------------------------------
 // Controls
 // ----------------------------------------------------------
-els.powerBtn.addEventListener("click", () => (state.powerOn ? powerOff() : powerOn()));
+els.powerBtn.addEventListener("click", () => {
+  if (state.powerOn) {
+    powerOff();
+  } else {
+    powerOn();
+  }
+});
+const exprBtns = document.querySelectorAll("#expressionControls .btn");
+if (exprBtns) {
+  exprBtns.forEach(btn => {
+    btn.addEventListener("click", (e) => {
+      setExpression(e.target.dataset.expr);
+    });
+  });
+}
 els.muteBtn.addEventListener("click", () => {
   state.muted = !state.muted;
-  mic?.setMuted(state.muted);
+  if (sttRec) {
+    if (state.muted) {
+        try { sttRec.stop(); } catch(e){}
+    } else {
+        try { sttRec.start(); } catch(e){}
+    }
+  }
   els.muteBtn.textContent = state.muted ? "Unmute" : "Mute";
   els.muteBtn.classList.toggle("active", state.muted);
   logAction(`mic ${state.muted ? "muted" : "live"}`);
@@ -658,11 +1209,8 @@ function sendText() {
   transcriptDelta("user", text);
   postLog("conversation", { role: "user", text });
   userLine = null;
-  if (session) {
-    session.sendClientContent({
-      turns: [{ role: "user", parts: [{ text }] }],
-      turnComplete: true,
-    });
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'text', text: text }));
   } else {
     transcriptDelta("robot", "(power me on first — the brain is offline)");
     botLine = null;
@@ -935,9 +1483,11 @@ function drawOverlay() {
 // boot
 // ----------------------------------------------------------
 setStatus("offline", "");
-setMedia(false, "Starting camera…");
-logAction(`display ready — ${MODEL} · voice ${VOICE_NAME} · press Power On`);
-if (!API_KEY) logAction("⚠ VITE_GEMINI_API_KEY missing — copy .env.example to .env and restart `npm run dev`");
+setMedia(false, "Media off");
+logAction(`display ready - click Power On to start`);
+state.powerOn = false;
+state.expression = "neutral";
+
 requestAnimationFrame(tick);
 // Auto-start camera + face detection without needing Power On.
 bootCamera();
@@ -945,22 +1495,29 @@ bootCamera();
 // ----------------------------------------------------------
 // LED dot-matrix robot face
 // ----------------------------------------------------------
-// Per-expression target shape params. curve: mouth smile(+)/frown(-).
-// eyeCurve: happy arc(+)/sad arc(-). eyeScale: eye size. base: resting
-// mouth openness. gaze: horizontal eye drift.
+// Per-expression target shape params.
 const EXPR_PARAMS = {
-  neutral:   { curve: 0.35, eyeCurve: 0.0,  eyeScale: 1.0,  base: 0.05, gaze: 0.0 },
-  happy:     { curve: 0.9,  eyeCurve: 0.8,  eyeScale: 1.0,  base: 0.08, gaze: 0.0 },
-  excited:   { curve: 1.0,  eyeCurve: 0.6,  eyeScale: 1.15, base: 0.12, gaze: 0.0 },
-  curious:   { curve: 0.45, eyeCurve: 0.2,  eyeScale: 1.1,  base: 0.06, gaze: 0.28 },
-  thinking:  { curve: 0.1,  eyeCurve: -0.1, eyeScale: 0.9,  base: 0.03, gaze: 0.36 },
-  surprised: { curve: 0.1,  eyeCurve: 0.0,  eyeScale: 1.45, base: 0.55, gaze: 0.0 },
-  sad:       { curve: -0.7, eyeCurve: -0.6, eyeScale: 0.95, base: 0.04, gaze: 0.0 },
-  love:      { curve: 0.85, eyeCurve: 0.7,  eyeScale: 1.05, base: 0.08, gaze: 0.0 },
-  sleepy:    { curve: 0.2,  eyeCurve: 0.3,  eyeScale: 0.55, base: 0.03, gaze: 0.0 },
+  neutral:     { curve: 0.35, eyeCurve: 0.0,  eyeScale: 1.0,  base: 0.05, gazeX: 0.0,  gazeY: 0.0,  browH: 0.0, browA: 0.0, tilt: 0.0, aMouth: 0.0, aBrowH: 0.0, aEyeScale: 0.0, jitter: 1.0, intensity: 0.6, r: 52, g: 222, b: 244, browAlpha: 0.0 },
+  happy:       { curve: 1.0,  eyeCurve: 0.6,  eyeScale: 1.15, base: 0.12, gazeX: 0.0,  gazeY: 0.0,  browH: 0.0, browA: 0.0, tilt: 0.0, aMouth: 0.0, aBrowH: 0.0, aEyeScale: 0.0, jitter: 1.5, intensity: 1.0, r: 253, g: 167, b: 68, browAlpha: 0.0 },
+  curious:     { curve: 0.45, eyeCurve: 0.2,  eyeScale: 1.1,  base: 0.06, gazeX: 0.28, gazeY: 0.1,  browH: 0.2, browA: 0.0, tilt: 0.1, aMouth: 0.0, aBrowH: 0.2, aEyeScale: 0.0, jitter: 1.1, intensity: 0.7, r: 87, g: 219, b: 210, browAlpha: 1.0 },
+  thinking:    { curve: 0.1,  eyeCurve: -0.1, eyeScale: 0.9,  base: 0.03, gazeX: 0.36, gazeY: -0.2, browH: -0.1, browA: 0.1, tilt: -0.05, aMouth: 0.0, aBrowH: 0.0, aEyeScale: 0.0, jitter: 0.8, intensity: 0.5, r: 43, g: 212, b: 238, browAlpha: 0.0 },
+  surprised:   { curve: 0.1,  eyeCurve: 0.0,  eyeScale: 1.45, base: 0.55, gazeX: 0.0,  gazeY: 0.2,  browH: 0.5, browA: 0.1, tilt: 0.0, aMouth: 0.0, aBrowH: 0.0, aEyeScale: 0.0, jitter: 1.4, intensity: 1.0, r: 223, g: 210, b: 144, browAlpha: 1.0 },
+  sad:         { curve: -0.7, eyeCurve: -0.6, eyeScale: 0.95, base: 0.04, gazeX: 0.0,  gazeY: -0.3, browH: 0.0, browA: 0.0, tilt: 0.05, aMouth: 0.0, aBrowH: 0.0, aEyeScale: 0.0, jitter: 0.6, intensity: 0.3, r: 23, g: 159, b: 232, browAlpha: 0.0 },
+  love:        { curve: 0.85, eyeCurve: 0.7,  eyeScale: 1.05, base: 0.08, gazeX: 0.0,  gazeY: 0.0,  browH: 0.0, browA: 0.0, tilt: 0.0, aMouth: 0.0, aBrowH: 0.0, aEyeScale: 0.0, jitter: 1.0, intensity: 0.8, r: 246, g: 76, b: 161, browAlpha: 0.0 },
+  sleepy:      { curve: 0.2,  eyeCurve: 0.3,  eyeScale: 0.55, base: 0.03, gazeX: 0.0,  gazeY: -0.1, browH: 0.0, browA: 0.0, tilt: 0.0, aMouth: 0.0, aBrowH: 0.0, aEyeScale: 0.0, jitter: 0.3, intensity: 0.2, r: 25, g: 189, b: 230, browAlpha: 0.0 },
+  angry:       { curve: -0.2, eyeCurve: -0.4, eyeScale: 0.9,  base: 0.0,  gazeX: 0.0,  gazeY: 0.0,  browH: -0.3, browA: -0.4, tilt: 0.0, aMouth: 0.0, aBrowH: 0.0, aEyeScale: 0.0, jitter: 1.5, intensity: 1.0, r: 250, g: 56, b: 72, browAlpha: 1.0 },
+  confused:    { curve: 0.1,  eyeCurve: -0.1, eyeScale: 1.0,  base: 0.05, gazeX: -0.1, gazeY: 0.0,  browH: 0.0, browA: 0.0, tilt: 0.15, aMouth: -0.1, aBrowH: 0.4, aEyeScale: 0.1, jitter: 1.2, intensity: 0.7, r: 49, g: 219, b: 242, browAlpha: 1.0 },
+  cheeky:      { curve: 0.6,  eyeCurve: 0.4,  eyeScale: 0.95, base: 0.05, gazeX: 0.1,  gazeY: 0.0,  browH: 0.0, browA: 0.0, tilt: -0.1, aMouth: 0.4, aBrowH: 0.3, aEyeScale: -0.1, jitter: 1.1, intensity: 0.8, r: 234, g: 197, b: 87, browAlpha: 1.0 },
+  bored:       { curve: 0.1,  eyeCurve: 0.0,  eyeScale: 0.75, base: 0.0,  gazeX: 0.0,  gazeY: 0.0,  browH: 0.0, browA: 0.0, tilt: 0.0, aMouth: 0.0, aBrowH: 0.0, aEyeScale: 0.0, jitter: 0.2, intensity: 0.3, r: 55, g: 158, b: 190, browAlpha: 0.0 },
+  scared:      { curve: -0.3, eyeCurve: -0.1, eyeScale: 1.3,  base: 0.2,  gazeX: 0.0,  gazeY: -0.1, browH: 0.4, browA: 0.2, tilt: 0.0, aMouth: 0.0, aBrowH: 0.0, aEyeScale: 0.0, jitter: 3.0, intensity: 1.0, r: 53, g: 143, b: 233, browAlpha: 1.0 },
 };
 
-const FACE_CYAN = "34, 231, 255";
+function spring(p, t, v, k, d) {
+  const f = (t - p) * k - v * d;
+  v += f;
+  p += v;
+  return { p, v };
+}
 
 function drawRobotFace() {
   const canvas = els.robotFace;
@@ -980,100 +1537,551 @@ function drawRobotFace() {
   ctx.fillStyle = "#050505";
   ctx.fillRect(0, 0, W, H);
 
-  // ---- ease animated params toward the current expression's targets ----
   const p = EXPR_PARAMS[state.expression] || EXPR_PARAMS.neutral;
   const now = performance.now();
   const asleep = !state.powerOn;
   const listening = state.powerOn && !state.speaking && !state.muted && currentVolume > 0.02;
 
-  face.curve += (p.curve - face.curve) * 0.15;
-  face.eyeCurve += (p.eyeCurve - face.eyeCurve) * 0.15;
-  const eyeScaleT = (asleep ? 0.9 : p.eyeScale) * (listening ? 1.08 : 1);
-  face.eyeScale += (eyeScaleT - face.eyeScale) * 0.15;
-  face.gaze += (p.gaze - face.gaze) * 0.08;
+  // Layered idle motion
+  const t = now / 1000;
+  const jit = asleep ? 0 : p.jitter;
+  const breath = Math.sin(t * 1.5) * 0.03 * jit;
+  const driftX = Math.sin(t * 0.8) * 0.08 * jit;
+  const driftY = Math.cos(t * 1.1) * 0.08 * jit;
+  
+  // Occasional saccades
+  if (!face.saccadeTime || now > face.saccadeTime) {
+    face.saccadeX = (Math.random() - 0.5) * 0.2 * jit;
+    face.saccadeY = (Math.random() - 0.5) * 0.2 * jit;
+    face.saccadeTime = now + 1000 + Math.random() * 3000;
+  }
+  // Smoothly blend out saccade over time
+  const sacProgress = Math.max(0, 1 - (now - (face.saccadeTime - 1000)) / 200);
+  const sacX = face.saccadeX * sacProgress;
+  const sacY = face.saccadeY * sacProgress;
 
-  // blink scheduling (skip random blinks while asleep — eyes stay low)
+  const targetGazeX = p.gazeX + driftX + sacX;
+  const targetGazeY = p.gazeY + driftY + sacY;
+  const eyeScaleT = (asleep ? 0.9 : p.eyeScale) * (listening ? 1.08 : 1) + breath;
+
+  // Spring physics (critically damped-ish)
+  const kFast = 0.1, dFast = 0.4;
+  const kSlow = 0.05, dSlow = 0.3;
+
+  let res;
+  res = spring(face.curve, p.curve, face.vCurve, kFast, dFast); face.curve = res.p; face.vCurve = res.v;
+  res = spring(face.eyeCurve, p.eyeCurve, face.vEyeCurve, kFast, dFast); face.eyeCurve = res.p; face.vEyeCurve = res.v;
+  res = spring(face.eyeScale, eyeScaleT, face.vEyeScale, kSlow, dSlow); face.eyeScale = res.p; face.vEyeScale = res.v;
+  res = spring(face.gazeX, targetGazeX, face.vGazeX, kFast, dFast); face.gazeX = res.p; face.vGazeX = res.v;
+  res = spring(face.gazeY, targetGazeY, face.vGazeY, kFast, dFast); face.gazeY = res.p; face.vGazeY = res.v;
+  res = spring(face.browH, p.browH, face.vBrowH, kFast, dFast); face.browH = res.p; face.vBrowH = res.v;
+  res = spring(face.browA, p.browA, face.vBrowA, kFast, dFast); face.browA = res.p; face.vBrowA = res.v;
+  res = spring(face.tilt, p.tilt, face.vTilt, 0.08, 0.4); face.tilt = res.p; face.vTilt = res.v;
+  res = spring(face.aMouth, p.aMouth, face.vAMouth, kFast, dFast); face.aMouth = res.p; face.vAMouth = res.v;
+  res = spring(face.aEyeScale, p.aEyeScale, face.vAEyeScale, kFast, dFast); face.aEyeScale = res.p; face.vAEyeScale = res.v;
+  res = spring(face.aBrowH, p.aBrowH, face.vABrowH, kFast, dFast); face.aBrowH = res.p; face.vABrowH = res.v;
+
+  res = spring(face.intensity, p.intensity, face.vIntensity, kSlow, dSlow); face.intensity = res.p; face.vIntensity = res.v;
+  res = spring(face.r, p.r, face.vR, kSlow, dSlow); face.r = res.p; face.vR = res.v;
+  res = spring(face.g, p.g, face.vG, kSlow, dSlow); face.g = res.p; face.vG = res.v;
+  res = spring(face.b, p.b, face.vB, kSlow, dSlow); face.b = res.p; face.vB = res.v;
+  res = spring(face.browAlpha, p.browAlpha, face.vBrowAlpha, kFast, dFast); face.browAlpha = res.p; face.vBrowAlpha = res.v;
+
   if (!asleep && now > face.nextBlink) {
-    face.blinkUntil = now + 110;
+    face.blinkUntil = now + 110 + (Math.random() < 0.1 ? 100 : 0); // occasionally longer blink
     face.nextBlink = now + 2600 + Math.random() * 3600;
   }
-  const eyeOpenT = asleep ? 0.12 : (now < face.blinkUntil ? 0.06 : 1);
-  face.eyeOpen += (eyeOpenT - face.eyeOpen) * 0.35;
+  const eyeOpenT = asleep ? 0.12 : (now < face.blinkUntil ? (Math.random() < 0.2 ? 0.3 : 0.06) : 1);
+  res = spring(face.eyeOpen, eyeOpenT, face.vEyeOpen, 0.4, 0.5); face.eyeOpen = res.p; face.vEyeOpen = res.v;
 
-  // mouth openness: real lip-sync from output audio while speaking
-  const level = state.speaking && player ? player.getLevel() : 0;
+  const level = state.speaking ? (Math.sin(performance.now() / 70) * 0.25 + 0.25) : 0;
   const mouthT = asleep ? 0 : Math.max(p.base, level);
-  face.mouthOpen += (mouthT - face.mouthOpen) * 0.5;
+  res = spring(face.mouthOpen, mouthT, face.vMouthOpen, 0.3, 0.6); face.mouthOpen = res.p; face.vMouthOpen = res.v;
+
+  // ---- dynamic overrides ----
+  let dynamicEyeScale = face.eyeScale;
+  if (state.expression === "love") {
+    const beat = (now % 1000) / 1000; 
+    if (beat < 0.15) {
+      dynamicEyeScale += Math.sin(beat / 0.15 * Math.PI) * 0.15;
+    } else if (beat > 0.2 && beat < 0.35) {
+      dynamicEyeScale += Math.sin((beat - 0.2) / 0.15 * Math.PI) * 0.1;
+    }
+  }
+
+  let eyeRollX = 0, eyeRollY = 0;
+  if (state.expression === "bored") {
+    const roll = (now % 4000) / 4000; // 4 second loop
+    if (roll < 0.15) {
+      const p = roll / 0.15;
+      eyeRollX = -0.8 * p;
+      eyeRollY = -0.8 * p;
+    } else if (roll < 0.4) {
+      const p = (roll - 0.15) / 0.25;
+      eyeRollX = -0.8 + 1.6 * p; 
+      eyeRollY = -0.8 - 0.2 * Math.sin(p * Math.PI); 
+    } else if (roll < 0.5) {
+      const p = (roll - 0.4) / 0.1;
+      eyeRollX = 0.8 * (1 - p);
+      eyeRollY = -0.8 * (1 - p);
+    }
+  }
 
   // ---- geometry ----
   const TAU = Math.PI * 2;
   const u = Math.min(W, H);
   const cx = W / 2, cy = H / 2;
+  
+  // Apply Tilt globally
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(face.tilt);
+  ctx.translate(-cx, -cy);
+
   const eyeDX = u * 0.2;
-  const eyeY = cy - u * 0.12;
-  const eyeRx = u * 0.115 * face.eyeScale;
-  const eyeRy = u * 0.125 * face.eyeScale * Math.max(0.08, face.eyeOpen);
-  const gazePx = face.gaze * u * 0.04;
+  const eyeY = cy - u * 0.12 + (face.gazeY + eyeRollY) * u * 0.05;
+  const gazePx = (face.gazeX + eyeRollX) * u * 0.04;
   const mouthY = cy + u * 0.16, mw = u * 0.24;
 
+  const baseIntensity = Math.max(0.1, Math.min(1.0, face.intensity));
+  
+  const rC = Math.max(0, Math.min(255, Math.round(face.r)));
+  const gC = Math.max(0, Math.min(255, Math.round(face.g)));
+  const bC = Math.max(0, Math.min(255, Math.round(face.b)));
+  
+  const rgbStr = `${rC}, ${gC}, ${bC}`;
+  
+  // Pulse glow intensity with the breathing sine wave
+  const pulse = 1.0 + breath * 2.0; 
+  const finalAlpha = Math.min(1, baseIntensity * pulse);
+
+  // --- Matrix Dot Grid Mode ---
   const eyeLit = (px, py, side) => {
+    const scale = dynamicEyeScale + (side > 0 ? face.aEyeScale : -face.aEyeScale);
+    const eyeRx = u * 0.115 * scale;
+    const eyeRy = u * 0.125 * scale * Math.max(0.08, face.eyeOpen);
     const ecx = cx + side * eyeDX + gazePx;
     const X = px - ecx, Y = py - eyeY;
+    
+    if (state.expression === "love") {
+      // Heart shape equation: (x^2 + y^2 - 1)^3 - x^2 * y^3 <= 0
+      let nx = X / (u * 0.115 * scale) * 1.25;
+      let ny = -Y / (u * 0.115 * scale) * 1.25 + 0.2; // canvas Y is inverted, shift up slightly
+      let eq = Math.pow(nx*nx + ny*ny - 1, 3) - nx*nx * ny*ny*ny;
+      return eq <= 0;
+    }
+
     if ((X / eyeRx) ** 2 + (Y / eyeRy) ** 2 > 1) return false;
-    // crescent: carve a shifted ellipse out to make happy(∩)/sad(∪) eyes
+    
     if (Math.abs(face.eyeCurve) > 0.05 && face.eyeOpen > 0.4) {
-      const off = face.eyeCurve * eyeRy * 1.1; // +down (keeps top ∩), -up (keeps bottom ∪)
+      const off = face.eyeCurve * eyeRy * 1.1; 
       if ((X / eyeRx) ** 2 + ((Y - off) / eyeRy) ** 2 <= 1) return false;
     }
     return true;
   };
 
-  const mouthLit = (px, py) => {
-    const X = px - cx;
-    if (Math.abs(X) > mw) return false;
-    const t = X / mw;
-    const yc = mouthY + face.curve * (u * 0.075) * (1 - t * t); // smile(+): corners up
-    const taper = Math.sqrt(Math.max(0, 1 - t * t));            // rounded ends
-    const half = (u * 0.017 + face.mouthOpen * u * 0.1) * (0.4 + 0.6 * taper);
-    return Math.abs(py - yc) <= half;
-  };
+    const browLit = (px, py, side) => {
+      if (face.eyeOpen < 0.2 || face.browAlpha < 0.01) return false;
+      const h = face.browH + (side > 0 ? face.aBrowH : -face.aBrowH);
+      const browY = eyeY - u * 0.15 - h * u * 0.1;
+      const ecx = cx + side * eyeDX + gazePx;
+      const X = px - ecx, Y = py - browY;
+      const ang = side * face.browA;
+      const rX = X * Math.cos(-ang) - Y * Math.sin(-ang);
+      const rY = X * Math.sin(-ang) + Y * Math.cos(-ang);
+      
+      if (Math.abs(rX) < u * 0.12 && Math.abs(rY) < u * 0.015) return true;
+      return false;
+    };
 
-  // ---- render the dot grid ----
-  // Build coordinate lists that are SYMMETRIC about the face center, so the two
-  // eyes get mirror-identical dot patterns (no lopsided eyes / stray dots).
-  const cell = Math.max(10, Math.round(u / 28));
-  const rDim = cell * 0.14, rLit = cell * 0.45; // fat dots ≈ touching → no gaps
-  const xs = [], ys = [];
-  for (let x = cx; x > -cell; x -= cell) xs.push(x);
-  for (let x = cx + cell; x < W + cell; x += cell) xs.push(x);
-  for (let y = cy; y > -cell; y -= cell) ys.push(y);
-  for (let y = cy + cell; y < H + cell; y += cell) ys.push(y);
+    const mouthLit = (px, py) => {
+      const X = px - cx;
+      if (Math.abs(X) > mw) return false;
+      const t = X / mw; // -1 to 1
+      const asymOffset = t * face.aMouth * (u * 0.05); 
+      const yc = mouthY + face.curve * (u * 0.075) * (1 - t * t) - asymOffset;
+      const taper = Math.sqrt(Math.max(0, 1 - t * t));
+      const half = (u * 0.017 + face.mouthOpen * u * 0.1) * (0.4 + 0.6 * taper);
+      return Math.abs(py - yc) <= half;
+    };
 
-  // pass 1: dim "unlit" LEDs everywhere (the matrix texture)
-  const lit = [];
-  ctx.shadowBlur = 0;
-  ctx.fillStyle = `rgba(${FACE_CYAN}, 0.05)`;
-  for (let yi = 0; yi < ys.length; yi++) {
-    const py = ys[yi];
-    for (let xi = 0; xi < xs.length; xi++) {
-      const px = xs[xi];
-      if (eyeLit(px, py, -1) || eyeLit(px, py, 1) || mouthLit(px, py)) {
-        lit.push(px, py);
-      } else {
-        ctx.beginPath();
-        ctx.arc(px, py, rDim, 0, TAU);
-        ctx.fill();
+    const cell = Math.max(6, Math.round(u / 45)); 
+    const rDim = cell * 0.14, rLit = cell * 0.45;
+    const lit = [];
+    
+    ctx.fillStyle = `rgba(${rgbStr}, ${0.05 * finalAlpha})`;
+    for (let py = 0; py < H; py += cell) {
+      for (let px = 0; px < W; px += cell) {
+        if (eyeLit(px, py, -1) || eyeLit(px, py, 1) || mouthLit(px, py) || browLit(px, py, -1) || browLit(px, py, 1)) {
+          lit.push(px, py);
+        } else {
+          ctx.beginPath();
+          ctx.arc(px, py, rDim, 0, TAU);
+          ctx.fill();
+        }
       }
     }
-  }
-  // pass 2: bright lit LEDs with a bloom
-  ctx.shadowColor = `rgba(${FACE_CYAN}, 0.9)`;
+    
+  ctx.shadowColor = `rgba(${rgbStr}, ${finalAlpha})`;
   ctx.shadowBlur = cell * 0.75;
-  ctx.fillStyle = `rgba(${FACE_CYAN}, 0.98)`;
+  ctx.fillStyle = `rgba(${rgbStr}, ${finalAlpha})`;
   for (let i = 0; i < lit.length; i += 2) {
     ctx.beginPath();
-    ctx.arc(lit[i], lit[i + 1], rLit, 0, TAU);
+    ctx.arc(lit[i], lit[i+1], rLit, 0, TAU);
     ctx.fill();
   }
   ctx.shadowBlur = 0;
+  ctx.restore();
+}
+
+async function runGeminiLiveMode(apiKey, modelName, voiceName, gen) {
+  player = new SpeakerPlayer({
+    onSpeaking: (active) => {
+      state.speaking = active;
+      els.speakingDot?.classList.toggle("active", active);
+    },
+  });
+  await player.resume();
+
+  mic = new MicCapture({
+    onChunk: (bytes) => {
+      if (gen !== sessionGen || !session) return;
+      try {
+        session.sendRealtimeInput({
+          audio: { data: b64FromBytes(bytes), mimeType: `audio/pcm;rate=${SEND_SAMPLE_RATE}` },
+        });
+      } catch {}
+    },
+    onLevel: (rms) => {
+      currentVolume = rms;
+    },
+  });
+
+  let micOk = true;
+  try {
+    await mic.start();
+    mic.setMuted(state.muted);
+  } catch (e) {
+    micOk = false;
+    logAction(`mic unavailable — ${e.name || e} (text chat still works)`);
+  }
+  const camOk = !!camStream;
+  setMedia(micOk && camOk, micOk && camOk ? "Media ✓" : micOk ? "No camera" : camOk ? "No mic" : "No media");
+  if (micOk) logAction(`microphone hot · ${mic.label()} · echo-cancelled (barge-in enabled)`);
+
+  ai = new GoogleGenAI({ apiKey: apiKey, httpOptions: { apiVersion: "v1beta" } });
+  logAction(`connecting -> ${modelName} · voice ${voiceName}`);
+
+  try {
+    session = await ai.live.connect({
+      model: modelName,
+      config: {
+        responseModalities: [Modality.AUDIO],
+        speechConfig: {
+          voiceConfig: { prebuiltVoiceConfig: { voiceName: voiceName } },
+        },
+        systemInstruction: SYSTEM_PROMPT,
+        tools: buildTools(),
+        inputAudioTranscription: {},
+        outputAudioTranscription: {},
+      },
+      callbacks: {
+        onopen: async () => {
+          if (gen !== sessionGen) return;
+          retries = 0;
+          setStatus("online", "");
+          logAction("online — listening & watching");
+          
+          // Seed session memory from python backend log cache if present
+          try {
+              const res = await fetch(`/api/memory?sessionId=${currentSessionId}`);
+              const data = await res.json();
+              if (data.turns && data.turns.length > 0) {
+                  console.log(`🧠 Seeding Gemini Live session memory with ${data.turns.length} turns`);
+                  session.sendClientContent({
+                      turns: data.turns,
+                      turnComplete: false
+                  });
+                  logAction(`reloaded ${data.turns.length} conversation context turns`);
+              }
+          } catch (e) {
+              console.warn("Failed to reload session memory:", e);
+          }
+        },
+        onmessage: (msg) => {
+          if (gen !== sessionGen) return;
+          handleServerMessage(msg);
+        },
+        onerror: (e) => {
+          if (gen !== sessionGen) return;
+          logAction(`link error: ${e?.message || e}`);
+        },
+        onclose: (e) => {
+          if (gen !== sessionGen) return;
+          session = null;
+          maybeReconnect(e?.reason || "link closed");
+        },
+      },
+    });
+  } catch (e) {
+    session = null;
+    teardownMedia();
+    setStatus("error", `connect failed: ${e?.message || e}`);
+    logAction(`connect failed: ${e?.message || e}`);
+    return;
+  }
+
+  if (gen !== sessionGen) return;
+
+  if (camOk) {
+    startFrameUpload(gen);
+    logAction(`camera stream: native fps on screen · ${MODEL_FRAME_FPS} fps to the model`);
+    if (faceEngine.ready && !faceEngine._timer) faceEngine.start(els.cameraFeed);
+  }
+}
+
+function handleServerMessage(msg) {
+  if (msg.data) player?.play(bytesFromB64(msg.data));
+
+  const tc = msg.toolCall;
+  if (tc?.functionCalls?.length) {
+    Promise.all(tc.functionCalls.map(async (fc) => ({
+      id: fc.id,
+      name: fc.name,
+      response: {
+        result: UI_TOOLS.has(fc.name)
+          ? executeUiTool(fc.name, fc.args || {})
+          : PEOPLE_TOOLS.has(fc.name)
+          ? await executePeopleTool(fc.name, fc.args || {})
+          : GESTURE_TOOLS.has(fc.name)
+          ? await executeGesture(fc.args || {})
+          : robot.execute(fc.name, fc.args || {}),
+      },
+    }))).then((functionResponses) => {
+      try { session?.sendToolResponse({ functionResponses }); } catch {}
+    });
+  }
+
+  const sc = msg.serverContent;
+  if (sc) {
+    if (sc.inputTranscription?.text) transcriptDelta("user", sc.inputTranscription.text);
+    if (sc.outputTranscription?.text) transcriptDelta("robot", sc.outputTranscription.text);
+    if (sc.interrupted) {
+      player?.interrupt();
+      logAction("interrupted — user barge-in");
+      postLog("action", { type: "interrupt", message: "User barge-in interrupted playback" });
+    }
+    if (sc.turnComplete) {
+      if (userLine && userLine.textContent) {
+        postLog("conversation", { role: "user", text: userLine.textContent });
+      }
+      if (botLine && botLine.textContent) {
+        postLog("conversation", { role: "robot", text: botLine.textContent });
+      }
+      userLine = null;
+      botLine = null;
+    }
+  }
+}
+
+function getUltravoxTools() {
+    if (typeof buildTools !== 'function') return [];
+    
+    // Fixie uses strict JSON Schema. Gemini uses uppercase types ("OBJECT", "STRING").
+    function fixSchemaTypes(obj) {
+        if (!obj || typeof obj !== 'object') return obj;
+        if (Array.isArray(obj)) return obj.map(fixSchemaTypes);
+        const res = {};
+        for (const [k, v] of Object.entries(obj)) {
+            if (k === 'type' && typeof v === 'string') {
+                res[k] = v.toLowerCase();
+            } else {
+                res[k] = fixSchemaTypes(v);
+            }
+        }
+        return res;
+    }
+
+    const geminiTools = buildTools()[0].functionDeclarations;
+    return geminiTools.map(t => {
+        const dynamicParameters = [];
+        if (t.parameters && t.parameters.properties) {
+            for (const [pName, pSchema] of Object.entries(t.parameters.properties)) {
+                dynamicParameters.push({
+                    name: pName,
+                    location: "PARAMETER_LOCATION_BODY",
+                    schema: fixSchemaTypes(JSON.parse(JSON.stringify(pSchema))),
+                    required: t.parameters.required ? t.parameters.required.includes(pName) : false
+                });
+            }
+        }
+        return {
+            temporaryTool: {
+                modelToolName: t.name,
+                description: t.description,
+                dynamicParameters: dynamicParameters,
+                client: {}
+            }
+        };
+    });
+}
+
+async function runUltravoxMode(gen) {
+  // We use SpeakerPlayer just for its AnalyserNode (lip-sync visualization)
+  player = new SpeakerPlayer({
+    onSpeaking: (active) => {
+      // Not strictly needed as Ultravox handles playback, but good for cleanup
+    },
+  });
+  await player.resume();
+
+  // Create an UltravoxSession
+  const uvSession = new UltravoxSession();
+  session = uvSession; // store globally so powerOff() can clean it up
+  
+  // Register tools
+  const allTools = typeof buildTools === 'function' ? buildTools()[0].functionDeclarations : [];
+  for (const t of allTools) {
+      uvSession.registerToolImplementation(t.name, async (args) => {
+          let parsedArgs = args;
+          if (typeof parsedArgs === 'string') {
+              try { parsedArgs = JSON.parse(parsedArgs); } catch(e) { parsedArgs = {}; }
+          }
+          parsedArgs = parsedArgs || {};
+          let result;
+          if (UI_TOOLS.has(t.name)) result = executeUiTool(t.name, parsedArgs);
+          else if (PEOPLE_TOOLS.has(t.name)) result = await executePeopleTool(t.name, parsedArgs);
+          else if (GESTURE_TOOLS.has(t.name)) result = await executeGesture(parsedArgs);
+          else result = robot.execute(t.name, parsedArgs);
+          
+          if (typeof result !== 'string') {
+              try { result = JSON.stringify(result); } catch(e) { result = "success"; }
+          }
+          return result;
+      });
+  }
+  
+  // Track status
+  uvSession.addEventListener("status", (e) => {
+      if (gen !== sessionGen) return;
+      if (uvSession.status === "connected") {
+          setStatus("online", "Ultravox Live");
+          logAction("online — listening (Ultravox audio-only mode)");
+          setMedia(true, "Audio Only");
+      } else if (uvSession.status === "disconnected") {
+          maybeReconnect("Ultravox session disconnected");
+      }
+  });
+  
+  // Track transcription
+  uvSession.addEventListener("transcripts", (e) => {
+      if (gen !== sessionGen) return;
+      const transcripts = uvSession.transcripts;
+      if (!transcripts) return;
+      
+      els.transcript.innerHTML = ""; // Rebuild to prevent flooding and overlapping text
+      let lastRole = null;
+      let lastText = "";
+      
+      for (const t of transcripts) {
+          const role = t.speaker === "user" ? "user" : "bot";
+          const div = document.createElement("div");
+          div.className = `line ${role}`;
+          const b = document.createElement("b");
+          b.textContent = role === "user" ? "You: " : "Robot: ";
+          div.appendChild(b);
+          const span = document.createElement("span");
+          span.textContent = t.text;
+          div.appendChild(span);
+          els.transcript.appendChild(div);
+          
+          lastRole = role;
+          lastText = t.text;
+      }
+      els.transcript.scrollTop = els.transcript.scrollHeight;
+      
+      if (lastRole) {
+          relay.publish("transcript", { role: lastRole, text: lastText, isNew: false });
+      }
+  });
+  
+  // Handle audio attachment for lip-sync
+  uvSession.addEventListener("status", (e) => {
+      if (uvSession.status === "connected") {
+          // Ultravox creates an <audio> element to play back the WebRTC audio.
+          // Wait briefly for it to be added to DOM if it does so, or fetch it.
+          // In some client SDK versions, we must attach the stream or it attaches itself.
+          // Let's hook into window.audioContext to route its track if we can,
+          // but we can also just let player.getLevel() fall back to 0 if we can't easily intercept it here.
+          // For a robust lip-sync, we need to create a MediaStreamAudioSourceNode from the remote stream.
+          
+          setTimeout(() => {
+              const audioEls = document.querySelectorAll('audio');
+              for (const el of audioEls) {
+                  if (el.srcObject && el.srcObject.getAudioTracks().length > 0 && !el._lipSyncHooked) {
+                      try {
+                          el._lipSyncHooked = true;
+                          // Use createMediaStreamSource instead of MediaElementSource to preserve browser AEC
+                          // This fixes the 'voice identification not accurate' issue where mic hears the robot.
+                          const srcNode = player._ctx.createMediaStreamSource(el.srcObject);
+                          srcNode.connect(player._analyser);
+                          // Do NOT connect to destination; let the native <audio> element play it for AEC.
+                          
+                          // Track speaking state
+                          const lipSyncInterval = setInterval(() => {
+                              if (!session || session !== uvSession) {
+                                  clearInterval(lipSyncInterval);
+                                  return;
+                              }
+                              if (player && player.getLevel() > 0.05) {
+                                  state.speaking = true;
+                                  els.speakingDot?.classList.add("active");
+                              } else {
+                                  state.speaking = false;
+                                  els.speakingDot?.classList.remove("active");
+                              }
+                          }, 100);
+                          
+                      } catch(err) {
+                          console.warn("Could not hook Ultravox audio element for lip-sync:", err);
+                      }
+                  }
+              }
+          }, 1000);
+      }
+  });
+
+  logAction(`connecting -> Ultravox (creating call)`);
+  
+  try {
+      // 1. Create a Call via our local backend API proxy to avoid CORS
+      const response = await fetch("/api/ultravox", {
+          method: "POST",
+          headers: {
+              "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+              systemPrompt: SYSTEM_PROMPT,
+              model: "fixie-ai/ultravox",
+              selectedTools: getUltravoxTools()
+          })
+      });
+      
+      if (!response.ok) {
+          const errData = await response.json();
+          throw new Error(errData.error || response.statusText);
+      }
+      
+      const callData = await response.json();
+      const joinUrl = callData.joinUrl;
+      
+      // 2. Join the call using ultravox-client
+      await uvSession.joinCall(joinUrl);
+      
+  } catch (e) {
+      session = null;
+      teardownMedia();
+      setStatus("error", `Ultravox failed: ${e?.message || e}`);
+      logAction(`Ultravox connect failed: ${e?.message || e}`);
+  }
 }

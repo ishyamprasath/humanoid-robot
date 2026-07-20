@@ -1,0 +1,6 @@
+insightface
+onnxruntime
+opencv-python
+PyQt6
+numpy
+scipy

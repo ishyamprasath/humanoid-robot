@@ -7,9 +7,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // Ensure directories exist relative to the project root (repository root)
 const ROOT_DIR = path.resolve(__dirname, "..");
-const CONV_DIR = path.join(ROOT_DIR, "conv-log");
-const TASK_DIR = path.join(ROOT_DIR, "task-log");
-const ACT_DIR = path.join(ROOT_DIR, "actions-log");
+const LOGS_DIR = path.join(ROOT_DIR, "logs");
+const CONV_DIR = path.join(LOGS_DIR, "conv-log");
+const TASK_DIR = path.join(LOGS_DIR, "task-log");
+const ACT_DIR = path.join(LOGS_DIR, "actions-log");
 
 [CONV_DIR, TASK_DIR, ACT_DIR].forEach((dir) => {
   if (!fs.existsSync(dir)) {
@@ -67,9 +68,18 @@ function loggerPlugin() {
 }
 
 export default defineConfig({
+  envDir: path.resolve(__dirname, '..'),
   server: {
     port: Number(process.env.PORT) || 5173,
     host: true,
+  },
+  build: {
+    rollupOptions: {
+      input: {
+        face: path.resolve(__dirname, 'face.html'),
+        control: path.resolve(__dirname, 'control.html'),
+      }
+    }
   },
   plugins: [loggerPlugin()],
 });
